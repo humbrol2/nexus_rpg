@@ -4,3 +4,5 @@ websockets==13.0
 opensimplex==0.4.5
 pyjwt==2.9.0
 bcrypt==4.2.0
+psycopg2-binary==2.9.11
+redis==7.4.0

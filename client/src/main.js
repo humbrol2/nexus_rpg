@@ -16,7 +16,23 @@ function startGame() {
 
   // Show admin button if admin
   if (isAdmin()) {
-    document.getElementById('btn-admin').style.display = 'block';
+    document.getElementById('btn-admin').style.display = 'flex';
+  }
+
+  // Menu button handlers — delegate to game scene via custom events
+  const menuActions = {
+    'btn-menu-inventory': 'toggleInventory',
+    'btn-menu-crafting': 'toggleCrafting',
+    'btn-menu-research': 'toggleResearch',
+    'btn-menu-map': 'toggleWorldMap',
+    'btn-menu-character': 'toggleCharacter',
+    'btn-menu-settings': 'toggleSettings',
+  };
+
+  for (const [btnId, action] of Object.entries(menuActions)) {
+    document.getElementById(btnId)?.addEventListener('click', () => {
+      window._gameMenuAction = action;
+    });
   }
 
   const config = {
@@ -150,7 +166,8 @@ async function refreshAdminPanel() {
   }
 }
 
-// Auto-login if token exists
+// Auto-login if token exists — validate first
 if (isLoggedIn()) {
   startGame();
 }
+// build: v2

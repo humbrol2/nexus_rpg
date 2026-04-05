@@ -38,20 +38,32 @@
     .btn-register { background: #30363d; color: #ccc; }
     .auth-error { color: #ff6b6b; font-size: 12px; margin-top: 12px; min-height: 18px; }
 
-    /* Top-right menu bar */
+    /* Top menu bar */
     #menu-bar {
-      position: fixed; top: 10px; right: 10px; z-index: 8000;
-      display: none; gap: 8px; align-items: center;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 8000;
+      display: none; height: 36px;
+      background: rgba(10,14,20,0.92);
+      border-bottom: 1px solid rgba(0,255,136,0.1);
+      align-items: center;
+      padding: 0 12px;
+      gap: 2px;
     }
     #menu-bar.visible { display: flex; }
-    #menu-bar span { color: #00ff88; font-size: 13px; font-family: monospace; }
-    #menu-bar button {
-      padding: 5px 12px; border: 1px solid #30363d; border-radius: 4px;
-      background: #161b22; color: #ccc; font-size: 12px; font-family: monospace;
-      cursor: pointer; transition: background 0.2s;
+    #menu-bar .menu-left { display: flex; align-items: center; gap: 2px; }
+    #menu-bar .menu-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+    #menu-bar .menu-btn {
+      padding: 4px 10px; border: none; border-radius: 4px;
+      background: transparent; color: #889999; font-size: 12px; font-family: monospace;
+      cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 5px;
+      height: 28px;
     }
-    #menu-bar button:hover { background: #30363d; }
-    #btn-admin { color: #ffcc44; border-color: #ffcc44; }
+    #menu-bar .menu-btn:hover { background: rgba(255,255,255,0.06); color: #ccdddd; }
+    #menu-bar .menu-btn .icon { font-size: 15px; }
+    #menu-bar .menu-btn .key { color: #556666; font-size: 10px; margin-left: 2px; }
+    #menu-bar .menu-sep { width: 1px; height: 20px; background: rgba(255,255,255,0.06); margin: 0 4px; }
+    #menu-bar .menu-username { color: #00ff88; font-size: 12px; font-family: monospace; margin-right: 6px; }
+    #btn-admin { color: #ffcc44 !important; }
+    #btn-logout { color: #cc6666 !important; }
 
     /* Admin panel */
     #admin-panel {
@@ -101,9 +113,20 @@
 
   <!-- In-game menu bar -->
   <div id="menu-bar">
-    <span id="menu-username"></span>
-    <button id="btn-admin" style="display:none">Admin</button>
-    <button id="btn-logout">Logout</button>
+    <div class="menu-left">
+      <button class="menu-btn" id="btn-menu-inventory"><span class="icon">&#x1F4E6;</span> Inventory <span class="key">I</span></button>
+      <button class="menu-btn" id="btn-menu-crafting"><span class="icon">&#x2692;</span> Crafting <span class="key">C</span></button>
+      <button class="menu-btn" id="btn-menu-research"><span class="icon">&#x1F52C;</span> Research <span class="key">R</span></button>
+      <button class="menu-btn" id="btn-menu-map"><span class="icon">&#x1F5FA;</span> Map <span class="key">M</span></button>
+      <button class="menu-btn" id="btn-menu-character"><span class="icon">&#x1F464;</span> Character</button>
+      <button class="menu-btn" id="btn-menu-settings"><span class="icon">&#x2699;</span> Settings</button>
+    </div>
+    <div class="menu-right">
+      <span class="menu-username" id="menu-username"></span>
+      <div class="menu-sep"></div>
+      <button class="menu-btn" id="btn-admin" style="display:none"><span class="icon">&#x1F6E1;</span> Admin</button>
+      <button class="menu-btn" id="btn-logout"><span class="icon">&#x23FB;</span> Logout</button>
+    </div>
   </div>
 
   <!-- Admin panel -->

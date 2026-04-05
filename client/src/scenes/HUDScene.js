@@ -1,28 +1,55 @@
 import Phaser from 'phaser';
 
-const ITEM_INFO = {
-  // Resources
-  stone:        { color: '#888888', label: 'Stone' },
-  iron_ore:     { color: '#8b5e3c', label: 'Iron Ore' },
-  copper_ore:   { color: '#b87333', label: 'Copper Ore' },
-  crystal:      { color: '#88ccee', label: 'Crystal' },
-  biomass:      { color: '#2aaa5a', label: 'Biomass' },
-  iron_plate:   { color: '#aaaacc', label: 'Iron Plate' },
-  copper_plate: { color: '#ddaa66', label: 'Cu Plate' },
-  iron_gear:    { color: '#8899aa', label: 'Iron Gear' },
-  circuit:      { color: '#44cc88', label: 'Circuit' },
-  wall_block:   { color: '#666677', label: 'Wall Blk' },
-  wood:         { color: '#8b6b3a', label: 'Wood' },
-  // Buildables (no inventory count — just toolbar actions)
-  _build_wall:     { color: '#555566', label: 'Wall', buildable: true },
-  _build_floor:    { color: '#777788', label: 'Floor', buildable: true },
-  _build_miner:    { color: '#cc8833', label: 'Miner', buildable: true },
-  _build_furnace:  { color: '#cc4422', label: 'Furnace', buildable: true },
-  _build_fab:      { color: '#6688cc', label: 'Fabricatr', buildable: true },
-  _build_storage:  { color: '#886644', label: 'Storage', buildable: true },
-};
+// ITEM_INFO is populated from server registry on init
+// Start with empty, filled by loadRegistry()
+const ITEM_INFO = {};
 
-// Export for GameScene
+/**
+ * Load item registry from server init data.
+ * Called once on connect — populates ITEM_INFO, tile labels, crafting menu.
+ */
+export function loadRegistry(data) {
+  // Build ITEM_INFO from server items
+  for (const [key, item] of Object.entries(data.items || {})) {
+    ITEM_INFO[key] = {
+      color: item.color,
+      label: item.label,
+    };
+    // Add placeable info if present
+    if (item.placeable) {
+      ITEM_INFO[key].placeable = {
+        type: 'build',
+        item: item.placeable.build_key,
+        tileId: item.placeable.tile_id,
+      };
+    }
+    // Machine items — placeable as machines
+    if (item.machine_type) {
+      ITEM_INFO[key].placeable = {
+        type: 'machine',
+        machine_type: item.machine_type,
+      };
+    }
+  }
+
+  // Build tile RGB lookup for minimap
+  ITEM_INFO._tileRGB = {};
+  for (const [tid, tile] of Object.entries(data.tiles || {})) {
+    ITEM_INFO._tileRGB[Number(tid)] = tile.color;
+  }
+
+  // Add machine toolbar items
+  for (const [tid, machine] of Object.entries(data.machines || {})) {
+    const tile = data.tiles?.[tid];
+    const color = tile ? `#${tile.color.map(c => c.toString(16).padStart(2,'0')).join('')}` : '#888888';
+    ITEM_INFO[`_build_machine_${tid}`] = {
+      color,
+      label: machine.name,
+      buildable: true,
+    };
+  }
+}
+
 export { ITEM_INFO };
 
 export class HUDScene extends Phaser.Scene {
@@ -59,6 +86,8 @@ export class HUDScene extends Phaser.Scene {
     this.craftingOpen = false;
     this.craftingElements = [];
     this.craftingContainer = null;
+    this.craftDetailOpen = false;
+    this.craftDetailElements = [];
 
     // World map
     this.worldMapOpen = false;
@@ -78,22 +107,29 @@ export class HUDScene extends Phaser.Scene {
   create() {
 
     // Coord text (top-left)
-    this.coordText = this.add.text(10, 10, '', {
+    this.coordText = this.add.text(10, 42, '', {
       fontSize: '14px', fontFamily: 'monospace',
       color: '#00ff88', backgroundColor: '#000000aa',
       padding: { x: 6, y: 4 },
     }).setDepth(1000);
 
-    this.statusText = this.add.text(10, 36, 'Connecting...', {
+    this.statusText = this.add.text(10, 66, 'Connecting...', {
       fontSize: '13px', fontFamily: 'monospace',
       color: '#ffaa00', backgroundColor: '#000000aa',
       padding: { x: 6, y: 4 },
     }).setDepth(1000);
 
-    this.tileInfoText = this.add.text(10, 60, '', {
+    this.tileInfoText = this.add.text(10, 90, '', {
       fontSize: '12px', fontFamily: 'monospace',
       color: '#aaaacc', backgroundColor: '#000000aa',
       padding: { x: 6, y: 3 },
+    }).setDepth(1000);
+
+    // Zone display (top-left, below coords)
+    this.zoneText = this.add.text(10, 112, '', {
+      fontSize: '13px', fontFamily: 'monospace',
+      color: '#44aa66', backgroundColor: '#000000aa',
+      padding: { x: 6, y: 4 },
     }).setDepth(1000);
 
     // Toast
@@ -135,8 +171,15 @@ export class HUDScene extends Phaser.Scene {
   }
 
   _createHotbar() {
-    this._toolbarSlotSize = 52;
-    this._toolbarPad = 4;
+    this._toolbarSlotSize = 65;
+    this._toolbarPad = 5;
+    this._loadToolbar();
+    this._registryLoaded = false;
+    this._renderToolbar();
+  }
+
+  onRegistryLoaded() {
+    this._registryLoaded = true;
     this._renderToolbar();
   }
 
@@ -178,58 +221,68 @@ export class HUDScene extends Phaser.Scene {
     for (let i = 0; i < slotCount; i++) {
       const sx = startX + 12 + i * (slotSize + pad);
       const sy = y + 6;
-      const itemKey = this.toolbarSlots[i];
+      let itemKey = this.toolbarSlots[i];
       const info = itemKey ? ITEM_INFO[itemKey] : null;
+      const isBuildable = info?.buildable;
       const count = itemKey ? (this.inventory[itemKey] || 0) : 0;
+
+      // Auto-clear slot if item has 0 count (unless it's a toolbar/placeable action)
+      // Don't clear until registry is loaded — ITEM_INFO might not have the item yet
+      const isPlaceable = !!(info?.placeable);
+      if (this._registryLoaded && itemKey && !isBuildable && !isPlaceable && count <= 0) {
+        this.toolbarSlots[i] = null;
+        itemKey = null;
+      }
+
+      const hasItem = itemKey && ITEM_INFO[itemKey];
       const isActive = i === this.activeToolbarSlot;
 
       const slotGfx = this.add.graphics().setDepth(901);
-      // Slot background
       if (isActive) {
         slotGfx.fillStyle(0x1a3322, 1);
         slotGfx.lineStyle(2, 0x00ff88, 0.8);
-      } else if (info) {
+      } else if (hasItem) {
         slotGfx.fillStyle(0x151a22, 1);
         slotGfx.lineStyle(1, 0x334455, 0.5);
       } else {
         slotGfx.fillStyle(0x0c0f14, 0.8);
         slotGfx.lineStyle(1, 0x1a1e28, 0.4);
       }
-      slotGfx.fillRoundedRect(sx, sy, slotSize, slotSize, 4);
-      slotGfx.strokeRoundedRect(sx, sy, slotSize, slotSize, 4);
+      slotGfx.fillRoundedRect(sx, sy, slotSize, slotSize, 5);
+      slotGfx.strokeRoundedRect(sx, sy, slotSize, slotSize, 5);
 
-      if (info) {
-        const swatchHex = parseInt(info.color.replace('#', ''), 16);
-        // Item icon
-        const iconSize = 20;
+      if (hasItem) {
+        const itemInfo = ITEM_INFO[itemKey];
+        const swatchHex = parseInt(itemInfo.color.replace('#', ''), 16);
+        const iconSize = 26;
         const iconX = sx + (slotSize - iconSize) / 2;
-        const iconY = sy + 4;
-        slotGfx.fillStyle(swatchHex, count > 0 ? 1 : 0.3);
-        slotGfx.fillRoundedRect(iconX, iconY, iconSize, iconSize, 3);
-        if (count > 0) {
-          slotGfx.fillStyle(0xffffff, 0.15);
-          slotGfx.fillRect(iconX + 2, iconY + 2, iconSize - 4, 4);
-        }
+        const iconY = sy + 5;
+        slotGfx.fillStyle(swatchHex, 1);
+        slotGfx.fillRoundedRect(iconX, iconY, iconSize, iconSize, 4);
+        slotGfx.fillStyle(0xffffff, 0.15);
+        slotGfx.fillRect(iconX + 2, iconY + 2, iconSize - 4, 5);
 
         // Label
-        const label = this.add.text(sx + slotSize / 2, sy + 27, info.label.slice(0, 6), {
-          fontSize: '7px', fontFamily: 'monospace',
-          color: count > 0 ? info.color : '#333344',
+        const label = this.add.text(sx + slotSize / 2, sy + 34, itemInfo.label.slice(0, 7), {
+          fontSize: '9px', fontFamily: 'monospace',
+          color: itemInfo.color,
         }).setOrigin(0.5, 0).setDepth(902);
         this.toolbarElements.push(label);
 
-        // Count
-        const countText = this.add.text(sx + slotSize / 2, sy + 37, count > 0 ? String(count) : '', {
-          fontSize: '10px', fontFamily: 'monospace', fontStyle: 'bold',
-          color: '#ffffff',
-        }).setOrigin(0.5, 0).setDepth(902);
-        this.toolbarElements.push(countText);
+        // Count (skip for buildable actions)
+        if (!isBuildable && count > 0) {
+          const countText = this.add.text(sx + slotSize / 2, sy + 46, String(count), {
+            fontSize: '11px', fontFamily: 'monospace', fontStyle: 'bold',
+            color: '#ffffff',
+          }).setOrigin(0.5, 0).setDepth(902);
+          this.toolbarElements.push(countText);
+        }
       }
 
       // Slot number
-      const numText = this.add.text(sx + 3, sy + 2, String((i + 1) % 10), {
-        fontSize: '8px', fontFamily: 'monospace',
-        color: isActive ? '#00ff88' : '#334455',
+      const numText = this.add.text(sx + 4, sy + 3, String((i + 1) % 10), {
+        fontSize: '10px', fontFamily: 'monospace',
+        color: isActive ? '#00ff88' : '#445566',
       }).setDepth(902);
       this.toolbarElements.push(numText);
 
@@ -278,14 +331,28 @@ export class HUDScene extends Phaser.Scene {
 
   assignToolbarSlot(index, itemKey) {
     if (index >= 0 && index < this.toolbarSlots.length) {
-      // Remove from any other slot first
       for (let i = 0; i < this.toolbarSlots.length; i++) {
-        if (this.toolbarSlots[i] === itemKey) {
-          this.toolbarSlots[i] = null;
-        }
+        if (this.toolbarSlots[i] === itemKey) this.toolbarSlots[i] = null;
       }
       this.toolbarSlots[index] = itemKey;
+      this._saveToolbar();
       this._renderToolbar();
+    }
+  }
+
+  _saveToolbar() {
+    localStorage.setItem('sc_toolbar', JSON.stringify(this.toolbarSlots));
+  }
+
+  _loadToolbar() {
+    const saved = localStorage.getItem('sc_toolbar');
+    if (saved) {
+      try {
+        const slots = JSON.parse(saved);
+        if (Array.isArray(slots) && slots.length === this.toolbarSlots.length) {
+          this.toolbarSlots = slots;
+        }
+      } catch (e) { /* ignore */ }
     }
   }
 
@@ -424,13 +491,8 @@ export class HUDScene extends Phaser.Scene {
     const imgData = ctx.createImageData(size, size);
     const d = imgData.data;
 
-    const TILE_RGB = {
-      0: [18,32,62], 1: [34,62,102], 2: [194,178,128], 3: [90,65,38],
-      4: [42,88,48], 5: [95,95,90], 6: [58,56,54], 7: [139,94,60],
-      8: [184,115,51], 9: [42,170,90], 10: [136,204,238], 11: [30,90,45],
-      100: [72,72,82], 101: [100,100,110],
-      200: [204,136,51], 201: [102,136,204], 202: [136,102,68], 203: [204,68,34],
-    };
+    // Build tile colors from registry
+    const TILE_RGB = ITEM_INFO._tileRGB || {};
 
     for (let i = 0; i < tiles.length; i++) {
       const col = TILE_RGB[tiles[i]] || [30, 30, 30];
@@ -552,6 +614,13 @@ export class HUDScene extends Phaser.Scene {
 
   updateTileInfo(text) {
     this.tileInfoText.setText(text);
+  }
+
+  updateZone(name, color) {
+    if (this.zoneText) {
+      this.zoneText.setText(name);
+      this.zoneText.setColor(color);
+    }
   }
 
   setStatus(text) {
@@ -697,25 +766,18 @@ export class HUDScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
 
-    // Only show items the player actually has
+    // Only show items the player actually has (no buildables — those go in crafting menu)
     const ownedItems = Object.entries(ITEM_INFO).filter(([key, info]) => !info.buildable && (this.inventory[key] || 0) > 0);
-    const buildableItems = Object.entries(ITEM_INFO).filter(([key, info]) => info.buildable);
     const cols = 6;
     const cellSize = 68;
     const cellPad = 5;
     const titleBarH = 32;
     const pad = 12;
-    const sectionLabelH = 22;
     const minSlots = Math.max(ownedItems.length, 6);
     const invRows = Math.ceil(minSlots / cols);
-    const buildRows = Math.ceil(buildableItems.length / cols);
     const gridW = cols * (cellSize + cellPad) - cellPad;
     const panelW = gridW + pad * 2;
-    const panelH = titleBarH + pad
-      + invRows * (cellSize + cellPad) - cellPad
-      + sectionLabelH + pad
-      + buildRows * (cellSize + cellPad) - cellPad
-      + pad;
+    const panelH = titleBarH + pad + invRows * (cellSize + cellPad) - cellPad + pad;
 
     const startX = this._invPosX ?? (cam.width - panelW) / 2;
     const startY = this._invPosY ?? (cam.height - panelH) / 2;
@@ -844,6 +906,38 @@ export class HUDScene extends Phaser.Scene {
           this._invDragStartX = pointer.x;
           this._invDragStartY = pointer.y;
           this._invDragKey = capturedKey;
+          this._invClickTime = Date.now();
+        });
+
+        dragHandle.on('pointerup', (pointer) => {
+          console.log('[INV-CLICK] pointerup', capturedKey, 'isDragging:', isDragging, 'timeDiff:', Date.now() - (this._invClickTime || 0), 'placeable:', ITEM_INFO[capturedKey]?.placeable);
+          if (!isDragging && Date.now() - (this._invClickTime || 0) < 300) {
+            // Special items — handle directly
+            if (capturedKey === 'claim_flag') {
+              const gs = this.scene.get('GameScene');
+              if (gs?.socket) gs.socket.send({ type: 'place_claim' });
+              this.showToast('Placing claim flag at your position...');
+              return;
+            }
+            // Only assign placeable items to toolbar on click
+            const itemInfo = ITEM_INFO[capturedKey];
+            console.log('[INV-CLICK] itemInfo?.placeable:', itemInfo?.placeable);
+            if (itemInfo?.placeable) {
+              let slotIdx = this.toolbarSlots.indexOf(capturedKey);
+              console.log('[INV-CLICK] existing slot:', slotIdx);
+              if (slotIdx === -1) {
+                slotIdx = this.toolbarSlots.indexOf(null);
+                if (slotIdx === -1) slotIdx = 0;
+                this.assignToolbarSlot(slotIdx, capturedKey);
+                console.log('[INV-CLICK] assigned to slot:', slotIdx);
+              }
+              this.selectToolbarSlot(slotIdx);
+              console.log('[INV-CLICK] selected slot:', slotIdx, 'activeSlot:', this.activeToolbarSlot);
+              this.showToast(`Selected: ${itemInfo.label} — click ground to place`);
+            } else {
+              this.showToast(`${info.label}: ${count}`);
+            }
+          }
         });
 
         dragHandle.on('pointermove', (pointer) => {
@@ -873,68 +967,6 @@ export class HUDScene extends Phaser.Scene {
       }).setOrigin(0.5, 0));
     }
 
-    // ── Buildables section ──
-    const buildSectionY = titleBarH + pad + invRows * (cellSize + cellPad);
-
-    // Section label
-    const buildLabel = this.add.graphics();
-    buildLabel.fillStyle(0x1a1510, 0.8);
-    buildLabel.fillRoundedRect(pad, buildSectionY, panelW - pad * 2, sectionLabelH, 3);
-    container.add(buildLabel);
-    container.add(this.add.text(pad + 8, buildSectionY + 4, 'BUILDABLES — drag to toolbar', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#cc8833',
-    }));
-
-    const buildGridY = buildSectionY + sectionLabelH + pad;
-
-    for (let i = 0; i < buildableItems.length; i++) {
-      const [key, info] = buildableItems[i];
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const cx = pad + col * (cellSize + cellPad);
-      const cy = buildGridY + row * (cellSize + cellPad);
-      const swatchHex = parseInt(info.color.replace('#', ''), 16);
-
-      const cell = this.add.graphics();
-      cell.fillStyle(0x1a1510, 1);
-      cell.fillRoundedRect(cx, cy, cellSize, cellSize, 5);
-      cell.lineStyle(1, swatchHex, 0.5);
-      cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 5);
-
-      const iconSize = 26;
-      const iconX = cx + (cellSize - iconSize) / 2;
-      const iconY = cy + 5;
-      cell.fillStyle(swatchHex, 1);
-      cell.fillRoundedRect(iconX, iconY, iconSize, iconSize, 4);
-      cell.fillStyle(0xffffff, 0.18);
-      cell.fillRect(iconX + 2, iconY + 2, iconSize - 4, 6);
-      container.add(cell);
-
-      container.add(this.add.text(cx + cellSize / 2, cy + 35, info.label, {
-        fontSize: '9px', fontFamily: 'monospace', color: info.color,
-      }).setOrigin(0.5, 0));
-
-      // Drag handle for buildable
-      const dragHandle = this.add.rectangle(
-        startX + cx + cellSize / 2, startY + cy + cellSize / 2,
-        cellSize, cellSize, 0x000000, 0
-      ).setInteractive({ useHandCursor: true }).setDepth(3005);
-      this.inventoryElements.push(dragHandle);
-
-      const capturedKey = key;
-      dragHandle.on('pointerdown', (pointer) => {
-        this._invDragStartX = pointer.x;
-        this._invDragStartY = pointer.y;
-        this._invDragKey = capturedKey;
-      });
-      dragHandle.on('pointermove', (pointer) => {
-        if (!this._invDragKey || this._invDragKey !== capturedKey) return;
-        const dist = Math.abs(pointer.x - this._invDragStartX) + Math.abs(pointer.y - this._invDragStartY);
-        if (dist > 8) {
-          this.startDragItem(capturedKey, pointer);
-        }
-      });
-    }
   }
 
   /**
@@ -973,65 +1005,25 @@ export class HUDScene extends Phaser.Scene {
   showCrafting() {
     this.closeCrafting();
     this.craftingOpen = true;
+    if (this._craftActiveTab === undefined) this._craftActiveTab = 0;
 
     const cam = this.cameras.main;
-    const ts = { fontSize: '12px', fontFamily: 'monospace', color: '#ccccdd' };
-    const tsSmall = { fontSize: '10px', fontFamily: 'monospace', color: '#889999' };
+    const sections = this.craftingMenuData || [];
+    if (sections.length === 0) return;
 
-    // Build all craftable entries
-    const sections = [
-      {
-        title: 'STRUCTURES',
-        color: '#7788aa',
-        items: [
-          { name: 'Wall', key: '1', cost: { stone: 3 } },
-          { name: 'Floor', key: '2', cost: { stone: 1 } },
-        ],
-      },
-      {
-        title: 'MACHINES',
-        color: '#cc8833',
-        items: [
-          { name: 'Auto-Miner', key: '3', cost: { stone: 5, iron_ore: 3 } },
-          { name: 'Furnace', key: '4', cost: { stone: 10 } },
-          { name: 'Fabricator', key: '5', cost: { stone: 8, iron_plate: 4 } },
-          { name: 'Storage Crate', key: '6', cost: { stone: 4 } },
-        ],
-      },
-      {
-        title: 'SMELTING (Furnace)',
-        color: '#cc4422',
-        items: [
-          { name: 'Iron Plate', key: 'F1', cost: { iron_ore: 2 }, machine: true },
-          { name: 'Copper Plate', key: 'F2', cost: { copper_ore: 2 }, machine: true },
-        ],
-      },
-      {
-        title: 'CRAFTING (Fabricator)',
-        color: '#6688cc',
-        items: [
-          { name: 'Iron Gear', key: 'F3', cost: { iron_plate: 2 }, machine: true },
-          { name: 'Circuit', key: 'F4', cost: { copper_plate: 1, iron_plate: 1 }, machine: true },
-          { name: 'Wall Block', key: 'F5', cost: { stone: 5 }, machine: true },
-        ],
-      },
-    ];
+    const activeTab = Math.min(this._craftActiveTab, sections.length - 1);
+    const activeSection = sections[activeTab];
 
-    // Calculate panel size
-    const panelW = 320;
-    const titleBarH = 32;
-    const pad = 14;
-    const sectionGap = 8;
-    const sectionHeaderH = 22;
-    const rowH = 38;
-
-    let totalContentH = pad;
-    for (const section of sections) {
-      totalContentH += sectionHeaderH + sectionGap;
-      totalContentH += section.items.length * rowH;
-      totalContentH += sectionGap;
-    }
-    const panelH = titleBarH + totalContentH + pad;
+    // Grid layout for items
+    const cols = 4;
+    const cellSize = 120;
+    const cellPad = 8;
+    const titleBarH = 44;
+    const tabBarH = 40;
+    const pad = 16;
+    const gridRows = Math.ceil(activeSection.items.length / cols);
+    const panelW = pad * 2 + cols * (cellSize + cellPad) - cellPad;
+    const panelH = titleBarH + tabBarH + pad + gridRows * (cellSize + cellPad) - cellPad + pad;
 
     const startX = this._craftPosX ?? (cam.width - panelW) / 2;
     const startY = this._craftPosY ?? (cam.height - panelH) / 2;
@@ -1059,11 +1051,11 @@ export class HUDScene extends Phaser.Scene {
     titleBar.lineBetween(0, titleBarH, panelW, titleBarH);
     container.add(titleBar);
 
-    container.add(this.add.text(pad, 8, 'CRAFTING', {
-      fontSize: '14px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
+    container.add(this.add.text(pad, 11, 'CRAFTING', {
+      fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
     }));
-    container.add(this.add.text(panelW - pad, 8, '[C] close', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#554433',
+    container.add(this.add.text(panelW - pad, 14, '[C] close', {
+      fontSize: '14px', fontFamily: 'monospace', color: '#554433',
     }).setOrigin(1, 0));
 
     // Drag handle
@@ -1100,81 +1092,276 @@ export class HUDScene extends Phaser.Scene {
       this.input.off('pointerup', onUp);
     };
 
-    // Render sections
-    let yOff = titleBarH + pad;
+    // Tab bar — short labels to prevent overlap
+    const tabW = (panelW - pad * 2) / sections.length;
+    sections.forEach((section, i) => {
+      const tx = pad + i * tabW;
+      const ty = titleBarH;
+      const isActive = i === activeTab;
+      const col = parseInt(section.color.replace('#', ''), 16);
 
-    for (const section of sections) {
-      // Section header
-      const headerBg = this.add.graphics();
-      headerBg.fillStyle(0x151520, 0.8);
-      headerBg.fillRoundedRect(pad - 2, yOff, panelW - pad * 2 + 4, sectionHeaderH, 3);
-      container.add(headerBg);
-
-      container.add(this.add.text(pad + 6, yOff + 4, section.title, {
-        fontSize: '11px', fontFamily: 'monospace', color: section.color, fontStyle: 'bold',
-      }));
-      yOff += sectionHeaderH + sectionGap;
-
-      // Items
-      for (const item of section.items) {
-        const costStr = Object.entries(item.cost)
-          .map(([k, v]) => {
-            const have = this.inventory[k] || 0;
-            const label = (ITEM_INFO[k]?.label || k).slice(0, 8);
-            const canAfford = have >= v;
-            return `${label}:${have}/${v}`;
-          })
-          .join('  ');
-
-        const canCraft = Object.entries(item.cost).every(
-          ([k, v]) => (this.inventory[k] || 0) >= v
-        );
-
-        // Row bg
-        const rowBg = this.add.graphics();
-        rowBg.fillStyle(canCraft ? 0x1a2a1a : 0x111115, 0.6);
-        rowBg.fillRoundedRect(pad, yOff, panelW - pad * 2, rowH - 4, 3);
-        if (canCraft) {
-          rowBg.lineStyle(1, 0x33aa44, 0.2);
-          rowBg.strokeRoundedRect(pad, yOff, panelW - pad * 2, rowH - 4, 3);
-        }
-        container.add(rowBg);
-
-        // Key badge
-        const badgeBg = this.add.graphics();
-        const badgeW = item.key.length > 1 ? 28 : 20;
-        badgeBg.fillStyle(canCraft ? 0x33aa44 : 0x333344, canCraft ? 0.8 : 0.4);
-        badgeBg.fillRoundedRect(pad + 6, yOff + 4, badgeW, 16, 3);
-        container.add(badgeBg);
-
-        container.add(this.add.text(pad + 6 + badgeW / 2, yOff + 5, item.key, {
-          fontSize: '10px', fontFamily: 'monospace',
-          color: canCraft ? '#ffffff' : '#666677', fontStyle: 'bold',
-        }).setOrigin(0.5, 0));
-
-        // Item name
-        container.add(this.add.text(pad + 8 + badgeW + 6, yOff + 4, item.name, {
-          fontSize: '12px', fontFamily: 'monospace',
-          color: canCraft ? '#ddddee' : '#556666',
-        }));
-
-        // Machine indicator
-        if (item.machine) {
-          container.add(this.add.text(panelW - pad - 6, yOff + 4, 'recipe', {
-            fontSize: '9px', fontFamily: 'monospace', color: '#445555',
-          }).setOrigin(1, 0));
-        }
-
-        // Cost line
-        container.add(this.add.text(pad + 8 + badgeW + 6, yOff + 19, costStr, {
-          fontSize: '9px', fontFamily: 'monospace',
-          color: canCraft ? '#66aa77' : '#443333',
-        }));
-
-        yOff += rowH;
+      const tabBg = this.add.graphics();
+      tabBg.fillStyle(isActive ? 0x1a2020 : 0x0e1015, 1);
+      tabBg.fillRect(tx, ty, tabW - 2, tabBarH);
+      if (isActive) {
+        tabBg.fillStyle(col, 0.8);
+        tabBg.fillRect(tx, ty + tabBarH - 3, tabW - 2, 3);
       }
-      yOff += sectionGap;
+      container.add(tabBg);
+
+      // Truncate title to fit tab
+      const maxChars = Math.max(4, Math.floor(tabW / 8));
+      const tabLabel = section.title.length > maxChars ? section.title.slice(0, maxChars) : section.title;
+      container.add(this.add.text(tx + tabW / 2, ty + 12, tabLabel, {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: isActive ? section.color : '#556666',
+        fontStyle: isActive ? 'bold' : 'normal',
+      }).setOrigin(0.5, 0));
+
+      const tabZone = this.add.rectangle(
+        startX + tx + tabW / 2, startY + ty + tabBarH / 2,
+        tabW, tabBarH, 0x000000, 0
+      ).setInteractive({ useHandCursor: true }).setDepth(3104);
+      this.craftingElements.push(tabZone);
+      tabZone.on('pointerdown', () => {
+        this._craftActiveTab = i;
+        this.showCrafting();
+      });
+    });
+
+    // Render active tab items as grid squares
+    activeSection.items.forEach((item, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const cx = pad + col * (cellSize + cellPad);
+      const cy = titleBarH + tabBarH + pad + row * (cellSize + cellPad);
+
+      const canCraft = Object.entries(item.cost).every(
+        ([k, v]) => (this.inventory[k] || 0) >= v
+      );
+
+      // Cell background
+      const cell = this.add.graphics();
+      cell.fillStyle(canCraft ? 0x1a2a1a : 0x111115, 1);
+      cell.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
+      cell.lineStyle(1, canCraft ? 0x33aa44 : 0x222233, canCraft ? 0.5 : 0.3);
+      cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 6);
+      container.add(cell);
+
+      // Item name (centered, top)
+      container.add(this.add.text(cx + cellSize / 2, cy + 8, item.name, {
+        fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold',
+        color: canCraft ? '#ddddee' : '#556666',
+        wordWrap: { width: cellSize - 10 }, align: 'center',
+      }).setOrigin(0.5, 0));
+
+      // Cost (centered, middle)
+      const costStr = Object.entries(item.cost).map(([k, v]) => {
+        const have = this.inventory[k] || 0;
+        return `${(ITEM_INFO[k]?.label || k).slice(0, 6)}:${have}/${v}`;
+      }).join('\n');
+      container.add(this.add.text(cx + cellSize / 2, cy + 45, costStr, {
+        fontSize: '9px', fontFamily: 'monospace',
+        color: canCraft ? '#66aa77' : '#553333',
+        align: 'center', lineSpacing: 2,
+      }).setOrigin(0.5, 0));
+
+      // Note or machine tag (bottom)
+      if (item.note) {
+        container.add(this.add.text(cx + cellSize / 2, cy + cellSize - 18, item.note, {
+          fontSize: '9px', fontFamily: 'monospace', color: '#667755',
+        }).setOrigin(0.5, 0));
+      } else if (item.machine) {
+        container.add(this.add.text(cx + cellSize / 2, cy + cellSize - 18, 'machine', {
+          fontSize: '9px', fontFamily: 'monospace', color: '#556644',
+        }).setOrigin(0.5, 0));
+      }
+
+      // Click zone
+      const clickZone = this.add.rectangle(
+        startX + cx + cellSize / 2, startY + cy + cellSize / 2,
+        cellSize, cellSize, 0x000000, 0
+      ).setInteractive({ useHandCursor: true }).setDepth(3103);
+      this.craftingElements.push(clickZone);
+
+      const capturedItem = { ...item };
+      clickZone.on('pointerdown', () => {
+        this._showCraftDetail(capturedItem);
+      });
+    });
+  }
+
+  _showCraftDetail(item) {
+    this._closeCraftDetail();
+    this.craftDetailOpen = true;
+
+    const cam = this.cameras.main;
+    const popW = 300;
+    const popH = 220;
+    const px = (cam.width - popW) / 2;
+    const py = (cam.height - popH) / 2;
+
+    const ts = { fontSize: '12px', fontFamily: 'monospace', color: '#ccccdd' };
+    let selectedQty = 1;
+
+    // Overlay
+    const overlay = this.add.graphics().setDepth(4500);
+    overlay.fillStyle(0x000000, 0.5);
+    overlay.fillRect(0, 0, cam.width, cam.height);
+    this.craftDetailElements.push(overlay);
+
+    // Panel
+    const bg = this.add.graphics().setDepth(4501);
+    bg.fillStyle(0x0d1117, 0.96);
+    bg.fillRoundedRect(px, py, popW, popH, 10);
+    bg.lineStyle(1, 0xffcc44, 0.4);
+    bg.strokeRoundedRect(px, py, popW, popH, 10);
+    this.craftDetailElements.push(bg);
+
+    // Title
+    this.craftDetailElements.push(
+      this.add.text(px + popW / 2, py + 14, item.name, {
+        fontSize: '16px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
+      }).setOrigin(0.5, 0).setDepth(4502)
+    );
+
+    // Note (if any)
+    if (item.note) {
+      this.craftDetailElements.push(
+        this.add.text(px + popW / 2, py + 36, item.note, {
+          fontSize: '11px', fontFamily: 'monospace', color: '#889999',
+        }).setOrigin(0.5, 0).setDepth(4502)
+      );
     }
+
+    // Cost per unit
+    const costPerUnit = Object.entries(item.cost).map(([k, v]) => {
+      const have = this.inventory[k] || 0;
+      return `${k}: ${have}/${v}`;
+    }).join('   ');
+    this.craftDetailElements.push(
+      this.add.text(px + popW / 2, py + 56, `Cost (x1): ${costPerUnit}`, {
+        ...ts, fontSize: '11px', color: '#889999',
+      }).setOrigin(0.5, 0).setDepth(4502)
+    );
+
+    // Total cost (updates with qty)
+    const totalCostText = this.add.text(px + popW / 2, py + 76, '', {
+      ...ts, fontSize: '12px',
+    }).setOrigin(0.5, 0).setDepth(4502);
+    this.craftDetailElements.push(totalCostText);
+
+    // Qty buttons
+    const qtyY = py + 105;
+    const qtys = [1, 5, 10];
+    const qtyButtons = [];
+
+    const updateQty = (q) => {
+      selectedQty = q;
+      // Update total cost text
+      const totalStr = Object.entries(item.cost).map(([k, v]) => {
+        const need = v * q;
+        const have = this.inventory[k] || 0;
+        const ok = have >= need;
+        return `${k}: ${have}/${need}`;
+      }).join('   ');
+      const canAfford = Object.entries(item.cost).every(([k, v]) => (this.inventory[k] || 0) >= v * q);
+      totalCostText.setText(`Total (x${q}): ${totalStr}`);
+      totalCostText.setColor(canAfford ? '#66aa77' : '#884444');
+
+      // Update button highlights
+      qtyButtons.forEach(({ btn, txt, val }) => {
+        btn.clear();
+        btn.fillStyle(val === q ? 0x44aa44 : 0x222233, val === q ? 0.9 : 0.8);
+        btn.fillRoundedRect(0, 0, 60, 30, 4);
+        btn.lineStyle(1, val === q ? 0x66cc66 : 0x333344, 0.6);
+        btn.strokeRoundedRect(0, 0, 60, 30, 4);
+        txt.setColor(val === q ? '#ffffff' : '#888899');
+      });
+
+      // Update craft button
+      const canCraft = Object.entries(item.cost).every(([k, v]) => (this.inventory[k] || 0) >= v * q);
+      craftBtn.clear();
+      craftBtn.fillStyle(canCraft ? 0x44aa44 : 0x333344, 0.9);
+      craftBtn.fillRoundedRect(0, 0, 120, 36, 5);
+      craftBtnText.setColor(canCraft ? '#ffffff' : '#555555');
+    };
+
+    qtys.forEach((q, i) => {
+      const bx = px + 50 + i * 75;
+      const btn = this.add.graphics().setDepth(4502).setPosition(bx, qtyY);
+      btn.fillStyle(q === 1 ? 0x44aa44 : 0x222233, q === 1 ? 0.9 : 0.8);
+      btn.fillRoundedRect(0, 0, 60, 30, 4);
+      btn.lineStyle(1, q === 1 ? 0x66cc66 : 0x333344, 0.6);
+      btn.strokeRoundedRect(0, 0, 60, 30, 4);
+      this.craftDetailElements.push(btn);
+
+      const txt = this.add.text(bx + 30, qtyY + 7, `x${q}`, {
+        fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold',
+        color: q === 1 ? '#ffffff' : '#888899',
+      }).setOrigin(0.5, 0).setDepth(4503);
+      this.craftDetailElements.push(txt);
+
+      qtyButtons.push({ btn, txt, val: q });
+
+      const hitZone = this.add.rectangle(bx + 30, qtyY + 15, 60, 30, 0x000000, 0)
+        .setInteractive({ useHandCursor: true }).setDepth(4504);
+      this.craftDetailElements.push(hitZone);
+      hitZone.on('pointerdown', () => updateQty(q));
+    });
+
+    // Craft button
+    const craftBtnX = px + (popW - 120) / 2;
+    const craftBtnY = py + 150;
+    const craftBtn = this.add.graphics().setDepth(4502).setPosition(craftBtnX, craftBtnY);
+    craftBtn.fillStyle(0x44aa44, 0.9);
+    craftBtn.fillRoundedRect(0, 0, 120, 36, 5);
+    this.craftDetailElements.push(craftBtn);
+
+    const craftBtnText = this.add.text(craftBtnX + 60, craftBtnY + 9, 'CRAFT', {
+      fontSize: '15px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffffff',
+    }).setOrigin(0.5, 0).setDepth(4503);
+    this.craftDetailElements.push(craftBtnText);
+
+    const craftHitZone = this.add.rectangle(craftBtnX + 60, craftBtnY + 18, 120, 36, 0x000000, 0)
+      .setInteractive({ useHandCursor: true }).setDepth(4504);
+    this.craftDetailElements.push(craftHitZone);
+
+    craftHitZone.on('pointerdown', () => {
+      const canAfford = Object.entries(item.cost).every(([k, v]) => (this.inventory[k] || 0) >= v * selectedQty);
+      if (!canAfford) { this.showToast('Not enough resources'); return; }
+
+      const gameScene = this.scene.get('GameScene');
+      if (gameScene?.socket) {
+        if (item.machine) {
+          this.showToast('Set recipe on machine (E to interact)');
+        } else if (item.craft_id) {
+          gameScene.socket.send({ type: 'hand_craft', item: item.craft_id, qty: selectedQty });
+        }
+      }
+      this._closeCraftDetail();
+    });
+
+    // Close button
+    this.craftDetailElements.push(
+      this.add.text(px + popW - 14, py + 8, 'X', {
+        fontSize: '14px', fontFamily: 'monospace', color: '#ff8888', fontStyle: 'bold',
+      }).setOrigin(1, 0).setDepth(4503)
+    );
+    const closeZone = this.add.rectangle(px + popW - 10, py + 14, 20, 20, 0x000000, 0)
+      .setInteractive({ useHandCursor: true }).setDepth(4504);
+    this.craftDetailElements.push(closeZone);
+    closeZone.on('pointerdown', () => this._closeCraftDetail());
+
+    // ESC to close (handled by existing cancelAll)
+
+    updateQty(1);
+  }
+
+  _closeCraftDetail() {
+    this.craftDetailOpen = false;
+    for (const el of this.craftDetailElements) el.destroy();
+    this.craftDetailElements = [];
   }
 
   isPointInCrafting(screenX, screenY) {
@@ -1195,6 +1382,7 @@ export class HUDScene extends Phaser.Scene {
   }
 
   closeCrafting() {
+    this._closeCraftDetail();
     this.craftingOpen = false;
     if (this._craftDragCleanup) {
       this._craftDragCleanup();
@@ -1487,18 +1675,362 @@ export class HUDScene extends Phaser.Scene {
   showResearch() {
     this.closeResearch();
     this.researchOpen = true;
+    if (this._resActiveTab === undefined) this._resActiveTab = -1;
 
     const cam = this.cameras.main;
     const tree = this.researchTree;
     const state = this.researchState;
     const completed = new Set(state.completed || []);
+    const margin = 30;
+    const mapW = cam.width - margin * 2;
+    const mapH = cam.height - margin * 2;
+
+    // Dark overlay
+    const overlay = this.add.graphics().setDepth(4500);
+    overlay.fillStyle(0x000000, 0.85);
+    overlay.fillRect(0, 0, cam.width, cam.height);
+    this.researchElements.push(overlay);
+
+    // Panel
+    const border = this.add.graphics().setDepth(4501);
+    border.fillStyle(0x0a0e14, 0.96);
+    border.fillRoundedRect(margin, margin, mapW, mapH, 10);
+    border.lineStyle(1, 0x8866ff, 0.3);
+    border.strokeRoundedRect(margin, margin, mapW, mapH, 10);
+    this.researchElements.push(border);
+
+    // Title
+    this.researchElements.push(
+      this.add.text(cam.width / 2, margin + 12, 'RESEARCH TREE', {
+        fontSize: '18px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
+      }).setOrigin(0.5, 0).setDepth(4510)
+    );
+    this.researchElements.push(
+      this.add.text(cam.width - margin - 14, margin + 12, '[R] / [ESC] close', {
+        fontSize: '11px', fontFamily: 'monospace', color: '#443366',
+      }).setOrigin(1, 0).setDepth(4510)
+    );
+
+    // Tier tabs
+    const tiers = new Set();
+    for (const node of Object.values(tree)) tiers.add(node.tier);
+    const tierList = [-1, ...Array.from(tiers).sort()]; // -1 = ALL
+    const tabBarY = margin + 38;
+    const tabW = Math.min(80, (mapW - 20) / tierList.length);
+
+    tierList.forEach((tier, i) => {
+      const tx = margin + 10 + i * (tabW + 4);
+      const isActive = tier === this._resActiveTab;
+      const label = tier === -1 ? 'ALL' : `TIER ${tier}`;
+
+      const tabBg = this.add.graphics().setDepth(4510);
+      tabBg.fillStyle(isActive ? 0x221a33 : 0x0e1015, 1);
+      tabBg.fillRoundedRect(tx, tabBarY, tabW, 24, 3);
+      if (isActive) {
+        tabBg.fillStyle(0x8866ff, 0.8);
+        tabBg.fillRect(tx, tabBarY + 21, tabW, 3);
+      }
+      this.researchElements.push(tabBg);
+
+      this.researchElements.push(
+        this.add.text(tx + tabW / 2, tabBarY + 5, label, {
+          fontSize: '10px', fontFamily: 'monospace',
+          color: isActive ? '#aa88ff' : '#556666', fontStyle: isActive ? 'bold' : 'normal',
+        }).setOrigin(0.5, 0).setDepth(4511)
+      );
+
+      const tabZone = this.add.rectangle(tx + tabW / 2, tabBarY + 12, tabW, 24, 0x000000, 0)
+        .setInteractive({ useHandCursor: true }).setDepth(4512);
+      this.researchElements.push(tabZone);
+      tabZone.on('pointerdown', () => {
+        this._resActiveTab = tier;
+        this.showResearch();
+      });
+    });
+
+    // Filter nodes by active tab
+    const filteredNodes = Object.entries(tree).filter(([id, node]) =>
+      this._resActiveTab === -1 || node.tier === this._resActiveTab
+    );
+
+    // Canvas area for cards
+    const canvasY = tabBarY + 32;
+    const canvasH = mapH - (canvasY - margin) - 10;
+    const canvasW = mapW - 20;
+
+    // Card layout
+    const cardW = 200;
+    const cardH = 180;
+    const gapX = 40;
+    const gapY = 24;
+
+    // Pan/zoom state
+    if (!this._resZoom) this._resZoom = 1;
+    if (!this._resPanX) this._resPanX = 10;
+    if (!this._resPanY) this._resPanY = 10;
+
+    // Render cards into a container
+    const container = this.add.container(margin + 10 + this._resPanX, canvasY + this._resPanY).setDepth(4502);
+    this.researchContainer = container;
+    this.researchElements.push(container);
+    container.setScale(this._resZoom);
+
+    // Clip mask (visual only — cards outside view still exist)
+    const mask = this.add.graphics().setDepth(4501);
+    mask.fillStyle(0x000000, 0);
+    mask.fillRect(margin + 10, canvasY, canvasW, canvasH);
+
+    // Tier colors
+    const tierColors = { 1: 0x44aa66, 2: 0xaa8844, 3: 0xaa44aa, 4: 0xcc4444 };
+
+    // Build node positions
+    const nodePositions = {};
+    for (const [id, node] of filteredNodes) {
+      nodePositions[id] = {
+        x: node.col * (cardW + gapX),
+        y: node.row * (cardH + gapY),
+      };
+    }
+
+    // Draw connector lines
+    const lines = this.add.graphics();
+    for (const [id, node] of filteredNodes) {
+      const to = nodePositions[id];
+      if (!to) continue;
+      for (const prereqId of node.prereqs) {
+        const from = nodePositions[prereqId];
+        if (!from) continue;
+        const isDone = completed.has(prereqId);
+        lines.lineStyle(2, isDone ? 0x44aa66 : 0x222244, isDone ? 0.7 : 0.3);
+        const midX = from.x + cardW + gapX / 2;
+        lines.beginPath();
+        lines.moveTo(from.x + cardW, from.y + cardH / 2);
+        lines.lineTo(midX, from.y + cardH / 2);
+        lines.lineTo(midX, to.y + cardH / 2);
+        lines.lineTo(to.x, to.y + cardH / 2);
+        lines.strokePath();
+      }
+    }
+    container.add(lines);
+
+    // Draw cards
+    for (const [id, node] of filteredNodes) {
+      const pos = nodePositions[id];
+      if (!pos) continue;
+      const cx = pos.x, cy = pos.y;
+
+      const isCompleted = completed.has(id);
+      const isActive = state.active === id;
+      const prereqsMet = node.prereqs.every(p => completed.has(p));
+      const canAfford = Object.entries(node.cost).every(([k, v]) => (this.inventory[k] || 0) >= v);
+      const canStart = !isCompleted && !state.active && prereqsMet && canAfford;
+      const isLocked = !prereqsMet && !isCompleted;
+      const tierColor = tierColors[node.tier] || 0x888888;
+
+      // Card bg
+      const card = this.add.graphics();
+      if (isCompleted) {
+        card.fillStyle(0x1a2a1a, 1); card.lineStyle(2, 0x33aa44, 0.7);
+      } else if (isActive) {
+        card.fillStyle(0x1a1a2e, 1); card.lineStyle(2, 0x8866ff, 0.8);
+      } else if (isLocked) {
+        card.fillStyle(0x0c0c10, 0.8); card.lineStyle(1, 0x1a1a22, 0.4);
+      } else if (canStart) {
+        card.fillStyle(0x151a20, 1); card.lineStyle(2, 0xaaaa44, 0.6);
+      } else {
+        card.fillStyle(0x12151c, 1); card.lineStyle(1, 0x2a2a3a, 0.5);
+      }
+      card.fillRoundedRect(cx, cy, cardW, cardH, 8);
+      card.strokeRoundedRect(cx, cy, cardW, cardH, 8);
+      card.fillStyle(tierColor, isLocked ? 0.2 : 0.6);
+      card.fillRect(cx + 5, cy + 5, cardW - 10, 5);
+      container.add(card);
+
+      // Tier badge
+      container.add(this.add.text(cx + cardW - 10, cy + 10, `T${node.tier}`, {
+        fontSize: '10px', fontFamily: 'monospace', color: `#${tierColor.toString(16).padStart(6, '0')}`,
+      }).setOrigin(1, 0));
+
+      // Name
+      container.add(this.add.text(cx + cardW / 2, cy + 18, node.name, {
+        fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold',
+        color: isLocked ? '#333344' : (isCompleted ? '#55cc66' : '#ccccdd'),
+      }).setOrigin(0.5, 0));
+
+      // Description
+      container.add(this.add.text(cx + cardW / 2, cy + 40, node.desc, {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: isLocked ? '#222233' : '#889999',
+        wordWrap: { width: cardW - 20 }, align: 'center',
+      }).setOrigin(0.5, 0));
+
+      // Unlocks
+      const unlockStr = 'Unlocks: ' + (node.unlocks || []).join(', ');
+      container.add(this.add.text(cx + cardW / 2, cy + 78, unlockStr, {
+        fontSize: '10px', fontFamily: 'monospace',
+        color: isLocked ? '#1a1a22' : '#668866',
+        wordWrap: { width: cardW - 16 }, align: 'center',
+      }).setOrigin(0.5, 0));
+
+      // Cost
+      const costLines = Object.entries(node.cost).map(([k, v]) => {
+        const have = this.inventory[k] || 0;
+        return `${k}: ${have}/${v}`;
+      }).join('  ');
+      container.add(this.add.text(cx + cardW / 2, cy + 110, costLines, {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: isLocked ? '#1a1a22' : (canAfford ? '#66aa77' : '#884444'),
+        align: 'center',
+      }).setOrigin(0.5, 0));
+
+      // Time
+      container.add(this.add.text(cx + cardW / 2, cy + 128, `Time: ${node.time}s`, {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: isLocked ? '#1a1a22' : '#556666',
+      }).setOrigin(0.5, 0));
+
+      // Status
+      if (isCompleted) {
+        container.add(this.add.text(cx + cardW / 2, cy + cardH - 28, 'COMPLETE', {
+          fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold', color: '#33aa44',
+        }).setOrigin(0.5, 0));
+      } else if (isActive) {
+        const pct = state.progress / node.time;
+        const bar = this.add.graphics();
+        bar.fillStyle(0x222233, 1);
+        bar.fillRoundedRect(cx + 10, cy + cardH - 30, cardW - 20, 16, 4);
+        bar.fillStyle(0x8866ff, 1);
+        bar.fillRoundedRect(cx + 10, cy + cardH - 30, (cardW - 20) * pct, 16, 4);
+        container.add(bar);
+        container.add(this.add.text(cx + cardW / 2, cy + cardH - 29, `${(pct * 100).toFixed(0)}%`, {
+          fontSize: '12px', fontFamily: 'monospace', color: '#ffffff',
+        }).setOrigin(0.5, 0));
+        this._resBar = bar;
+        this._resBarX = cx + 10;
+        this._resBarY = cy + cardH - 30;
+        this._resBarW = cardW - 20;
+        this._resNodeTime = node.time;
+        this._resPctText = null; // will update via full redraw
+      } else if (canStart) {
+        const btnW = 100, btnH = 28;
+        const btnX = cx + (cardW - btnW) / 2, btnY = cy + cardH - btnH - 8;
+        const btn = this.add.graphics();
+        btn.fillStyle(0x44aa44, 0.9);
+        btn.fillRoundedRect(btnX, btnY, btnW, btnH, 5);
+        container.add(btn);
+        container.add(this.add.text(cx + cardW / 2, btnY + 6, 'START', {
+          fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffffff',
+        }).setOrigin(0.5, 0));
+
+        // Clickable — need screen position accounting for container offset + scale
+        const screenBtnX = container.x + btnX * this._resZoom + btnW * this._resZoom / 2;
+        const screenBtnY = container.y + btnY * this._resZoom + btnH * this._resZoom / 2;
+        const clickZone = this.add.rectangle(screenBtnX, screenBtnY,
+          btnW * this._resZoom, btnH * this._resZoom, 0x000000, 0
+        ).setInteractive({ useHandCursor: true }).setDepth(4520);
+        this.researchElements.push(clickZone);
+        const capturedId = id;
+        clickZone.on('pointerdown', () => {
+          const gs = this.scene.get('GameScene');
+          if (gs?.socket) gs.socket.send({ type: 'research_start', id: capturedId });
+        });
+      } else if (isLocked) {
+        container.add(this.add.text(cx + cardW / 2, cy + cardH - 24, 'LOCKED', {
+          fontSize: '13px', fontFamily: 'monospace', color: '#333344',
+        }).setOrigin(0.5, 0));
+      } else {
+        container.add(this.add.text(cx + cardW / 2, cy + cardH - 24, 'NEED RESOURCES', {
+          fontSize: '12px', fontFamily: 'monospace', color: '#553333',
+        }).setOrigin(0.5, 0));
+      }
+
+      // Cancel for active
+      if (isActive) {
+        const cbtn = this.add.graphics();
+        cbtn.fillStyle(0x663333, 0.8);
+        cbtn.fillRoundedRect(cx + cardW - 26, cy + 6, 20, 20, 3);
+        container.add(cbtn);
+        container.add(this.add.text(cx + cardW - 16, cy + 8, 'X', {
+          fontSize: '13px', fontFamily: 'monospace', color: '#ff8888', fontStyle: 'bold',
+        }).setOrigin(0.5, 0));
+
+        const screenCX = container.x + (cx + cardW - 16) * this._resZoom;
+        const screenCY = container.y + (cy + 16) * this._resZoom;
+        const cancelZone = this.add.rectangle(screenCX, screenCY, 20 * this._resZoom, 20 * this._resZoom, 0x000000, 0)
+          .setInteractive({ useHandCursor: true }).setDepth(4520);
+        this.researchElements.push(cancelZone);
+        cancelZone.on('pointerdown', () => {
+          const gs = this.scene.get('GameScene');
+          if (gs?.socket) gs.socket.send({ type: 'research_cancel' });
+        });
+      }
+    }
+
+    // Pan via mouse drag
+    let dragging = false, lastX = 0, lastY = 0;
+    const hitZone = this.add.rectangle(
+      margin + mapW / 2, canvasY + canvasH / 2, canvasW, canvasH, 0x000000, 0
+    ).setInteractive().setDepth(4501);
+    this.researchElements.push(hitZone);
+
+    hitZone.on('pointerdown', (p) => { dragging = true; lastX = p.x; lastY = p.y; });
+    const onMove = (p) => {
+      if (!dragging) return;
+      this._resPanX += p.x - lastX;
+      this._resPanY += p.y - lastY;
+      lastX = p.x; lastY = p.y;
+      container.setPosition(margin + 10 + this._resPanX, canvasY + this._resPanY);
+    };
+    const onUp = () => { dragging = false; };
+
+    // Zoom via scroll
+    const onWheel = (pointer, gameObjects, dx, dy) => {
+      this._resZoom = Phaser.Math.Clamp(this._resZoom - dy * 0.001, 0.3, 2);
+      container.setScale(this._resZoom);
+    };
+
+    this.input.on('pointermove', onMove);
+    this.input.on('pointerup', onUp);
+    this.input.on('wheel', onWheel);
+    this._resDragCleanup = () => {
+      this.input.off('pointermove', onMove);
+      this.input.off('pointerup', onUp);
+      this.input.off('wheel', onWheel);
+    };
+
+    // Legend
+    const legY = margin + mapH - 20;
+    this.researchElements.push(
+      this.add.text(margin + 14, legY, 'Drag: pan | Scroll: zoom | Click card: start research', {
+        fontSize: '10px', fontFamily: 'monospace', color: '#445555',
+      }).setDepth(4510)
+    );
+
+    // Active research status bar
+    if (state.active && tree[state.active]) {
+      const an = tree[state.active];
+      const pct = ((state.progress / an.time) * 100).toFixed(0);
+      this.researchElements.push(
+        this.add.text(cam.width - margin - 14, legY, `Researching: ${an.name} (${pct}%)`, {
+          fontSize: '10px', fontFamily: 'monospace', color: '#aa88ff',
+        }).setOrigin(1, 0).setDepth(4510)
+      );
+    }
+
+  }
+
+  _deadCodeRemoved() { return; // placeholder for removed old research code
+    const cam_old = null;
+    const tree = this.researchTree;
+    const state = this.researchState;
+    const completed = new Set(state.completed || []);
 
     // Grid layout
-    const cardSize = 200;
-    const gapX = 40;
-    const gapY = 22;
-    const pad = 24;
-    const titleBarH = 44;
+    const cardSize = 150;
+    const gapX = 30;
+    const gapY = 16;
+    const pad = 18;
+    const titleBarH = 40;
 
     // Find grid bounds from row/col
     let maxCol = 0, maxRow = 0;
@@ -1512,8 +2044,8 @@ export class HUDScene extends Phaser.Scene {
     const panelW = pad * 2 + cols * cardSize + (cols - 1) * gapX;
     const panelH = titleBarH + pad + rows * cardSize + (rows - 1) * gapY + pad;
 
-    const startX = this._resPosX ?? (cam.width - panelW) / 2;
-    const startY = this._resPosY ?? Math.max(20, (cam.height - panelH) / 2);
+    const startX = this._resPosX ?? 0; // eslint fix — dead code
+    const startY = this._resPosY ?? 0;
 
     this._resPanelW = panelW;
     this._resPanelH = panelH;
@@ -1539,10 +2071,10 @@ export class HUDScene extends Phaser.Scene {
     container.add(titleBar);
 
     container.add(this.add.text(pad, 12, 'RESEARCH TREE', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
+      fontSize: '17px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
     }));
     container.add(this.add.text(panelW - pad, 14, '[R] close', {
-      fontSize: '13px', fontFamily: 'monospace', color: '#443366',
+      fontSize: '12px', fontFamily: 'monospace', color: '#443366',
     }).setOrigin(1, 0));
 
     // Tier column labels
@@ -1551,7 +2083,7 @@ export class HUDScene extends Phaser.Scene {
     for (let c = 0; c <= maxCol; c++) {
       const cx = pad + c * (cardSize + gapX) + cardSize / 2;
       container.add(this.add.text(cx, titleBarH + 6, `Tier ${tierLabels[c] || c+1}`, {
-        fontSize: '13px', fontFamily: 'monospace',
+        fontSize: '12px', fontFamily: 'monospace',
         color: `#${tierColors[c]?.toString(16).padStart(6, '0') || '888888'}`,
       }).setOrigin(0.5, 0));
     }
@@ -1643,21 +2175,21 @@ export class HUDScene extends Phaser.Scene {
 
       // Tier color accent bar at top
       card.fillStyle(tierColor, isLocked ? 0.2 : 0.6);
-      card.fillRect(cx + 5, cy + 5, cardSize - 10, 5);
+      card.fillRect(cx + 4, cy + 4, cardSize - 8, 4);
 
       container.add(card);
 
       // Name
-      container.add(this.add.text(cx + cardSize / 2, cy + 18, node.name, {
-        fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold',
+      container.add(this.add.text(cx + cardSize / 2, cy + 14, node.name, {
+        fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold',
         color: isLocked ? '#333344' : (isCompleted ? '#55cc66' : '#ccccdd'),
       }).setOrigin(0.5, 0));
 
       // Description
-      container.add(this.add.text(cx + cardSize / 2, cy + 40, node.desc, {
-        fontSize: '12px', fontFamily: 'monospace',
-        color: isLocked ? '#222233' : '#778899',
-        wordWrap: { width: cardSize - 20 },
+      container.add(this.add.text(cx + cardSize / 2, cy + 32, node.desc, {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: isLocked ? '#222233' : '#889999',
+        wordWrap: { width: cardSize - 16 },
         align: 'center',
       }).setOrigin(0.5, 0));
 
@@ -1665,46 +2197,54 @@ export class HUDScene extends Phaser.Scene {
       const costLines = Object.entries(node.cost).map(([k, v]) => {
         const have = this.inventory[k] || 0;
         return `${k}: ${have}/${v}`;
-      }).join('\n');
-      container.add(this.add.text(cx + cardSize / 2, cy + 80, costLines, {
-        fontSize: '12px', fontFamily: 'monospace',
+      }).join('  ');
+      container.add(this.add.text(cx + cardSize / 2, cy + 68, costLines, {
+        fontSize: '11px', fontFamily: 'monospace',
         color: isLocked ? '#1a1a22' : (canAfford ? '#66aa77' : '#884444'),
-        align: 'center', lineSpacing: 3,
+        align: 'center',
       }).setOrigin(0.5, 0));
 
       // Time
-      container.add(this.add.text(cx + cardSize / 2, cy + 145, `Time: ${node.time}s`, {
-        fontSize: '12px', fontFamily: 'monospace',
+      container.add(this.add.text(cx + cardSize / 2, cy + 86, `${node.time}s`, {
+        fontSize: '11px', fontFamily: 'monospace',
         color: isLocked ? '#1a1a22' : '#556666',
       }).setOrigin(0.5, 0));
 
       // Status / Progress
       if (isCompleted) {
-        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 30, 'DONE', {
-          fontSize: '16px', fontFamily: 'monospace', fontStyle: 'bold', color: '#33aa44',
+        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 22, 'COMPLETE', {
+          fontSize: '13px', fontFamily: 'monospace', fontStyle: 'bold', color: '#33aa44',
         }).setOrigin(0.5, 0));
       } else if (isActive) {
         const pct = state.progress / node.time;
         const bar = this.add.graphics();
         bar.fillStyle(0x222233, 1);
-        bar.fillRoundedRect(cx + 10, cy + cardSize - 32, cardSize - 20, 18, 4);
+        bar.fillRoundedRect(cx + 8, cy + cardSize - 24, cardSize - 16, 14, 3);
         bar.fillStyle(0x8866ff, 1);
-        bar.fillRoundedRect(cx + 10, cy + cardSize - 32, (cardSize - 20) * pct, 18, 4);
+        bar.fillRoundedRect(cx + 8, cy + cardSize - 24, (cardSize - 16) * pct, 14, 3);
         container.add(bar);
-        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 31, `${((pct)*100).toFixed(0)}%`, {
-          fontSize: '12px', fontFamily: 'monospace', color: '#ffffff',
-        }).setOrigin(0.5, 0));
+        const pctText = this.add.text(cx + cardSize / 2, cy + cardSize - 23, `${((pct)*100).toFixed(0)}%`, {
+          fontSize: '11px', fontFamily: 'monospace', color: '#ffffff',
+        }).setOrigin(0.5, 0);
+        container.add(pctText);
+        // Store refs for live update
+        this._resBar = bar;
+        this._resPctText = pctText;
+        this._resBarX = cx + 8;
+        this._resBarY = cy + cardSize - 24;
+        this._resBarW = cardSize - 16;
+        this._resNodeTime = node.time;
       } else if (canStart) {
-        const btnW = 90;
-        const btnH = 28;
+        const btnW = 80;
+        const btnH = 22;
         const btnX = cx + (cardSize - btnW) / 2;
-        const btnY = cy + cardSize - btnH - 8;
+        const btnY = cy + cardSize - btnH - 6;
         const btn = this.add.graphics();
         btn.fillStyle(0x44aa44, 0.9);
         btn.fillRoundedRect(btnX, btnY, btnW, btnH, 4);
         container.add(btn);
-        container.add(this.add.text(cx + cardSize / 2, btnY + 5, 'START', {
-          fontSize: '14px', fontFamily: 'monospace', color: '#ffffff', fontStyle: 'bold',
+        container.add(this.add.text(cx + cardSize / 2, btnY + 3, 'START', {
+          fontSize: '12px', fontFamily: 'monospace', color: '#ffffff', fontStyle: 'bold',
         }).setOrigin(0.5, 0));
 
         const clickZone = this.add.rectangle(
@@ -1717,12 +2257,12 @@ export class HUDScene extends Phaser.Scene {
           if (gs?.socket) gs.socket.send({ type: 'research_start', id: capturedId });
         });
       } else if (isLocked) {
-        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 28, 'LOCKED', {
-          fontSize: '13px', fontFamily: 'monospace', color: '#333344',
+        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 20, 'LOCKED', {
+          fontSize: '11px', fontFamily: 'monospace', color: '#333344',
         }).setOrigin(0.5, 0));
       } else {
-        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 28, 'NEED RES', {
-          fontSize: '13px', fontFamily: 'monospace', color: '#553333',
+        container.add(this.add.text(cx + cardSize / 2, cy + cardSize - 20, 'NEED RES', {
+          fontSize: '11px', fontFamily: 'monospace', color: '#553333',
         }).setOrigin(0.5, 0));
       }
 
@@ -1730,14 +2270,14 @@ export class HUDScene extends Phaser.Scene {
       if (isActive) {
         const cbtn = this.add.graphics();
         cbtn.fillStyle(0x663333, 0.8);
-        cbtn.fillRoundedRect(cx + cardSize - 26, cy + 5, 22, 22, 4);
+        cbtn.fillRoundedRect(cx + cardSize - 20, cy + 4, 16, 16, 3);
         container.add(cbtn);
-        container.add(this.add.text(cx + cardSize - 15, cy + 7, 'X', {
-          fontSize: '14px', fontFamily: 'monospace', color: '#ff8888', fontStyle: 'bold',
+        container.add(this.add.text(cx + cardSize - 12, cy + 5, 'X', {
+          fontSize: '11px', fontFamily: 'monospace', color: '#ff8888', fontStyle: 'bold',
         }).setOrigin(0.5, 0));
 
         const cancelZone = this.add.rectangle(
-          startX + cx + cardSize - 15, startY + cy + 16, 22, 22, 0x000000, 0
+          startX + cx + cardSize - 12, startY + cy + 12, 16, 16, 0x000000, 0
         ).setInteractive({ useHandCursor: true }).setDepth(3205);
         this.researchElements.push(cancelZone);
         cancelZone.on('pointerdown', () => {
@@ -1748,13 +2288,18 @@ export class HUDScene extends Phaser.Scene {
     }
   }
 
+  updateResearchProgress() {
+    if (!this.researchOpen || !this.researchState?.active) return;
+    // Full redraw to update progress bar (throttled to every 500ms)
+    const now = Date.now();
+    if (!this._resLastRedraw || now - this._resLastRedraw > 500) {
+      this._resLastRedraw = now;
+      this.showResearch();
+    }
+  }
+
   isPointInResearch(screenX, screenY) {
-    if (!this.researchOpen || !this.researchContainer) return false;
-    const c = this.researchContainer;
-    return (
-      screenX >= c.x && screenX <= c.x + (this._resPanelW || 0) &&
-      screenY >= c.y && screenY <= c.y + (this._resPanelH || 0)
-    );
+    return this.researchOpen; // full-screen overlay blocks everything
   }
 
   closeResearch() {

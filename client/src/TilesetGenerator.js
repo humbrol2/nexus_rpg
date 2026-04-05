@@ -324,18 +324,103 @@ function paintWall(ctx, x, y, rng) {
 }
 
 function paintFloor(ctx, x, y, rng) {
-  const base = { r: 100, g: 100, b: 110 };
+  // Dirt base under cobblestones
+  const dirt = { r: 75, g: 60, b: 42 };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      const grid = (px % 16 < 1 || py % 16 < 1) ? -10 : 0;
-      ctx.fillStyle = rgbStr(
-        vary(rng, base.r + grid, 4),
-        vary(rng, base.g + grid, 4),
-        vary(rng, base.b + grid, 5)
-      );
+      ctx.fillStyle = rgbStr(vary(rng, dirt.r, 8), vary(rng, dirt.g, 6), vary(rng, dirt.b, 6));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
+
+  // Cobblestones — irregular rounded rectangles
+  const stones = [
+    [2, 2, 8, 6], [11, 1, 7, 7], [20, 2, 9, 6],
+    [1, 10, 9, 7], [12, 9, 8, 8], [22, 10, 8, 6],
+    [3, 19, 7, 7], [12, 18, 9, 6], [23, 19, 7, 7],
+    [1, 27, 8, 4], [11, 26, 8, 5], [21, 27, 9, 4],
+  ];
+
+  for (const [sx, sy, sw, sh] of stones) {
+    const shade = 90 + (rng() * 35) | 0;
+    // Stone fill
+    for (let py = 0; py < sh; py++) {
+      for (let px = 0; px < sw; px++) {
+        // Round corners
+        const corner = (px === 0 && py === 0) || (px === sw-1 && py === 0) ||
+                       (px === 0 && py === sh-1) || (px === sw-1 && py === sh-1);
+        if (corner) continue;
+
+        const highlight = py < 2 ? 12 : (py > sh - 2 ? -10 : 0);
+        ctx.fillStyle = rgbStr(
+          vary(rng, shade + highlight, 6),
+          vary(rng, shade - 5 + highlight, 6),
+          vary(rng, shade - 10 + highlight, 5)
+        );
+        ctx.fillRect(x + sx + px, y + sy + py, 1, 1);
+      }
+    }
+  }
+
+  // Subtle border to show it's a placed tile
+  ctx.strokeStyle = 'rgba(180,170,140,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
+}
+
+function paintChest(ctx, x, y, rng, baseR, baseG, baseB) {
+  // Ground
+  paintDirt(ctx, x, y, rng);
+  // Chest body
+  const cx = x + 5, cy = y + 10, cw = 22, ch = 16;
+  ctx.fillStyle = rgbStr(baseR, baseG, baseB);
+  ctx.fillRect(cx, cy, cw, ch);
+  // Lid (slightly lighter)
+  ctx.fillStyle = rgbStr(baseR + 20, baseG + 20, baseB + 15);
+  ctx.fillRect(cx, cy, cw, 6);
+  // Border
+  ctx.strokeStyle = rgbStr(baseR - 30, baseG - 30, baseB - 25);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx + 0.5, cy + 0.5, cw - 1, ch - 1);
+  // Lid line
+  ctx.fillStyle = rgbStr(baseR - 20, baseG - 20, baseB - 15);
+  ctx.fillRect(cx + 1, cy + 5, cw - 2, 1);
+  // Lock/latch
+  ctx.fillStyle = rgbStr(200, 180, 80);
+  ctx.fillRect(cx + 9, cy + 4, 4, 4);
+  ctx.fillStyle = rgbStr(160, 140, 50);
+  ctx.fillRect(cx + 10, cy + 5, 2, 2);
+  // Highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(cx + 2, cy + 1, cw - 4, 3);
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(cx, cy + ch, cw, 2);
+}
+
+function paintSign(ctx, x, y, rng) {
+  // Dirt base
+  paintDirt(ctx, x, y, rng);
+  // Wooden post
+  ctx.fillStyle = rgbStr(90, 65, 35);
+  ctx.fillRect(x + 14, y + 10, 4, 20);
+  // Sign board
+  const boardY = y + 6;
+  ctx.fillStyle = rgbStr(160, 125, 70);
+  ctx.fillRect(x + 5, boardY, 22, 14);
+  // Board border
+  ctx.strokeStyle = rgbStr(100, 75, 40);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 5.5, boardY + 0.5, 21, 13);
+  // Text lines (decorative)
+  ctx.fillStyle = rgbStr(60, 45, 25);
+  ctx.fillRect(x + 8, boardY + 3, 16, 1);
+  ctx.fillRect(x + 8, boardY + 6, 14, 1);
+  ctx.fillRect(x + 8, boardY + 9, 10, 1);
+  // Wood grain on post
+  ctx.fillStyle = rgbStr(75, 55, 30);
+  ctx.fillRect(x + 15, y + 14, 1, 3);
+  ctx.fillRect(x + 15, y + 20, 1, 2);
 }
 
 function paintMachine(ctx, x, y, rng, color, symbol) {
@@ -373,7 +458,7 @@ function paintMachine(ctx, x, y, rng, color, symbol) {
 // ── Main generator ──
 
 export function generateTileset(scene) {
-  const tileCount = 16; // 0-11 terrain + 100,101 build + 200-203 machines
+  const tileCount = 17; // 0-11 terrain + 100-102 build + 200-201 machines (in painters array)
   const canvas = document.createElement('canvas');
   canvas.width = T * tileCount;
   canvas.height = T;
@@ -394,23 +479,29 @@ export function generateTileset(scene) {
     (x, y) => paintAlienTree(ctx, x, y, mulberry32(1150)),        // 11
     (x, y) => paintWall(ctx, x, y, mulberry32(1200)),             // 12 -> 100
     (x, y) => paintFloor(ctx, x, y, mulberry32(1300)),            // 13 -> 101
-    (x, y) => paintMachine(ctx, x, y, mulberry32(1400), 0xcc8833, 'M'),  // 14 -> 200 miner
-    (x, y) => paintMachine(ctx, x, y, mulberry32(1500), 0x6688cc, 'F'),  // 15 -> 201 fabricator
+    (x, y) => paintSign(ctx, x, y, mulberry32(1350)),             // 14 -> 102
+    (x, y) => paintMachine(ctx, x, y, mulberry32(1400), 0xcc8833, 'M'),  // 15 -> 200 miner
+    (x, y) => paintMachine(ctx, x, y, mulberry32(1500), 0x6688cc, 'F'),  // 16 -> 201 fabricator
   ];
 
   painters.forEach((paint, i) => paint(i * T, 0));
 
   // Add extra machine tiles by extending canvas
   const canvas2 = document.createElement('canvas');
-  canvas2.width = T * (tileCount + 2);
+  canvas2.width = T * (tileCount + 6); // +storage, furnace, 4 chests
   canvas2.height = T;
   const ctx2 = canvas2.getContext('2d');
   ctx2.drawImage(canvas, 0, 0);
 
-  // Storage (index 16 -> 202)
-  paintMachine(ctx2, 16 * T, 0, mulberry32(1600), 0x886644, 'S');
-  // Furnace (index 17 -> 203)
-  paintMachine(ctx2, 17 * T, 0, mulberry32(1700), 0xcc4422, 'Fu');
+  // Storage (index 17 -> 202)
+  paintMachine(ctx2, 17 * T, 0, mulberry32(1600), 0x886644, 'S');
+  // Furnace (index 18 -> 203)
+  paintMachine(ctx2, 18 * T, 0, mulberry32(1700), 0xcc4422, 'Fu');
+  // Chests (index 19-22 -> 204-207)
+  paintChest(ctx2, 19 * T, 0, mulberry32(1800), 139, 107, 58);  // wood
+  paintChest(ctx2, 20 * T, 0, mulberry32(1810), 95, 95, 90);    // stone
+  paintChest(ctx2, 21 * T, 0, mulberry32(1820), 184, 115, 51);  // copper
+  paintChest(ctx2, 22 * T, 0, mulberry32(1830), 130, 140, 155); // iron
 
   // Register as Phaser texture
   if (scene.textures.exists('tileset')) {
@@ -425,8 +516,9 @@ export function generateTileset(scene) {
 const TILE_INDEX_MAP = {
   0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
   7: 7, 8: 8, 9: 9, 10: 10, 11: 11,
-  100: 12, 101: 13,
-  200: 14, 201: 15, 202: 16, 203: 17,
+  100: 12, 101: 13, 102: 14,
+  200: 15, 201: 16, 202: 17, 203: 18,
+  204: 19, 205: 20, 206: 21, 207: 22,
 };
 
 export function getTileIndex(tileId) {
@@ -472,7 +564,37 @@ export function generatePlayerTextures(scene) {
   gfx.fillRect(17, 26, 4, 5);
   gfx.generateTexture('player_other', 32, 32);
 
+  // Sheep — fluffy white blob with legs and face
+  gfx.clear();
+  // Body (wool)
+  gfx.fillStyle(0xddddcc, 1);
+  gfx.fillEllipse(16, 16, 22, 16);
+  // Wool texture bumps
+  gfx.fillStyle(0xeeeedd, 1);
+  gfx.fillCircle(12, 13, 4);
+  gfx.fillCircle(18, 11, 4);
+  gfx.fillCircle(20, 15, 3);
+  gfx.fillCircle(14, 17, 3);
+  // Head
+  gfx.fillStyle(0x888877, 1);
+  gfx.fillEllipse(6, 12, 8, 7);
+  // Eye
+  gfx.fillStyle(0x222222, 1);
+  gfx.fillCircle(5, 11, 1.5);
+  // Legs
+  gfx.fillStyle(0x665544, 1);
+  gfx.fillRect(10, 22, 2, 6);
+  gfx.fillRect(15, 22, 2, 6);
+  gfx.fillRect(19, 22, 2, 6);
+  gfx.fillRect(23, 22, 2, 6);
+  gfx.generateTexture('npc_sheep', 32, 32);
+
   gfx.destroy();
+}
+
+export function generateNPCTextures(scene) {
+  // Already generated in generatePlayerTextures above
+  // This function exists for future animal types
 }
 
 export const TILE_SIZE = T;

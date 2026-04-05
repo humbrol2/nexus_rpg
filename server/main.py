@@ -15,9 +15,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from world import (
-    WorldGenerator, CHUNK_SIZE, MINABLE_TILES, BUILDABLE,
-    DIRT, SOLID_TILES, WALL,
+from world import WorldGenerator, CHUNK_SIZE, SOLID_TILES, DIRT, WALL, FLOOR, RESPAWN_TIMES
+SIGN = 102
+from item_registry import (
+    TILES, ITEMS, MINABLE, BUILDABLE, HAND_RECIPES, MACHINES,
+    MACHINE_RECIPES, CRAFTING_MENU, ANIMALS, get_client_registry,
+    get_zone_at, set_active_claims, SPAWN_X, SPAWN_Y,
 )
 from player import PlayerManager, Player
 from machines import (
@@ -26,6 +29,7 @@ from machines import (
 )
 import database as db
 from research import PlayerResearch, RESEARCH_TREE, get_tree_for_client
+from npcs import NPCManager, ANIMAL_TYPES
 
 TILE_PX = 32
 UPS = 10
@@ -48,12 +52,25 @@ JWT_ALGORITHM = "HS256"
 world = WorldGenerator(seed=12345)
 players = PlayerManager()
 machine_mgr = MachineManager()
+npc_mgr = NPCManager()
 connections: dict[str, WebSocket] = {}
 mining_sessions: dict[str, dict] = {}
 # Map ws_id -> user_id for persistence
 ws_to_user: dict[str, int] = {}
 # Research state per ws_id
 player_research: dict[str, PlayerResearch] = {}
+# Track who placed each building: (wx, wy) -> user_id
+building_owners: dict[tuple[int, int], int] = {}
+
+
+def check_zone_permission(wx: int, wy: int, user_id: int, is_admin: bool) -> str | None:
+    """Check if building/mining is allowed at this position. Returns error reason or None."""
+    zone = get_zone_at(wx, wy)
+    if zone["admin_only"] and not is_admin:
+        return "protected_zone"
+    if zone.get("claimed") and zone.get("owner_id") != user_id and not is_admin:
+        return "claimed_land"
+    return None
 
 
 def load_world_state():
@@ -62,6 +79,29 @@ def load_world_state():
     mods = db.load_world_mods()
     world._modifications = mods
     print(f"[INIT] Loaded {len(mods)} tile modifications")
+
+    # Load building ownership
+    global building_owners
+    building_owners = db.load_building_owners()
+    print(f"[INIT] Loaded {len(building_owners)} building owners")
+
+    # Rebuild respawn queue for mined tiles that should regrow
+    # Any DIRT modification where the original procedural tile was a respawnable resource
+    import time as _time
+    respawn_count = 0
+    for (wx, wy), tile_id in list(world._modifications.items()):
+        if tile_id == DIRT:
+            original = world._get_tile(wx, wy)
+            if original in RESPAWN_TIMES and RESPAWN_TIMES[original] > 0:
+                # Queue respawn — assume it was mined recently (conservative: full respawn time)
+                world._respawn_queue[(wx, wy)] = (original, _time.time() + RESPAWN_TIMES[original])
+                respawn_count += 1
+    print(f"[INIT] Queued {respawn_count} tile respawns")
+
+    # Load land claims
+    claims = db.get_all_claims()
+    set_active_claims(claims)
+    print(f"[INIT] Loaded {len(claims)} land claims")
 
     # Load machines
     machine_data = db.load_machines()
@@ -132,6 +172,11 @@ async def send_chunks_around(ws: WebSocket, player: Player) -> None:
             })
             for m in machine_mgr.get_in_chunk(cx + dx, cy + dy):
                 await send_json(ws, {"type": "machine_state", "machine": m.to_dict()})
+            # Send signs in this chunk
+            for sign in db.get_signs_in_chunk(cx + dx, cy + dy):
+                await send_json(ws, {"type": "sign_data", "sign": sign})
+            # Spawn NPCs in this chunk if not yet spawned
+            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world)
 
 
 @asynccontextmanager
@@ -300,9 +345,13 @@ async def websocket_endpoint(ws: WebSocket):
             await send_json(ws, {"type": "auth_fail", "reason": "invalid_token"})
             await ws.close()
             return
-        # Check if banned
+        # Check if user exists and isn't banned
         user_check = db.get_user_by_id(token_data["user_id"])
-        if not user_check or user_check["is_banned"]:
+        if not user_check:
+            await send_json(ws, {"type": "auth_fail", "reason": "invalid_token"})
+            await ws.close()
+            return
+        if user_check["is_banned"]:
             await send_json(ws, {"type": "auth_fail", "reason": "banned"})
             await ws.close()
             return
@@ -312,9 +361,26 @@ async def websocket_endpoint(ws: WebSocket):
 
     user_id = token_data["user_id"]
     username = token_data["username"]
+    is_admin = user_check["is_admin"]
     ws_id = str(uuid.uuid4())
 
-    # Load persisted player state
+    # Kick existing connection for same user (prevents race condition)
+    for old_ws_id, old_uid in list(ws_to_user.items()):
+        if old_uid == user_id and old_ws_id in connections:
+            old_player = players.get_player(old_ws_id)
+            if old_player:
+                save_player(old_ws_id, old_player)
+            old_ws = connections.pop(old_ws_id, None)
+            ws_to_user.pop(old_ws_id, None)
+            players.remove_player(old_ws_id)
+            player_research.pop(old_ws_id, None)
+            if old_ws:
+                try: await old_ws.close()
+                except: pass
+            print(f"[AUTH] Kicked old session for {username}")
+
+    # Load player state — clear Redis, force fresh PG read
+    db.get_redis().delete(f"player:{user_id}")
     state = db.load_player_state(user_id)
 
     player = players.add_player(ws_id, name=username)
@@ -329,16 +395,8 @@ async def websocket_endpoint(ws: WebSocket):
     pr = PlayerResearch.from_dict(research_data) if research_data else PlayerResearch()
     player_research[ws_id] = pr
 
-    # Build recipes info for client
-    recipes_info = {}
-    for output, (inputs, craft_time, machine_type) in RECIPES.items():
-        recipes_info[output] = {
-            "inputs": inputs,
-            "time": craft_time,
-            "machine": MACHINE_NAMES.get(machine_type, "Unknown"),
-            "machine_type": machine_type,
-        }
-
+    # Send registry + player state
+    registry = get_client_registry()
     await send_json(ws, {
         "type": "init",
         "player": player.to_dict(),
@@ -347,11 +405,11 @@ async def websocket_endpoint(ws: WebSocket):
         "tileSize": TILE_PX,
         "chunkSize": CHUNK_SIZE,
         "ups": UPS,
-        "buildable": {k: {"cost": v[1]} for k, v in BUILDABLE.items()},
-        "machineCosts": {str(k): v for k, v in MACHINE_COSTS.items()},
-        "recipes": recipes_info,
         "researchTree": get_tree_for_client(),
         "research": pr.to_dict(),
+        **registry,
+        "claims": db.get_all_claims(),
+        "claimRadius": 12,
     })
 
     await send_chunks_around(ws, player)
@@ -395,10 +453,28 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "mine_start":
                 wx, wy = msg["wx"], msg["wy"]
+
+                # Range check
+                player_tx = int(player.x // TILE_PX)
+                player_ty = int(player.y // TILE_PX)
+                if abs(wx - player_tx) > 3 or abs(wy - player_ty) > 3:
+                    await send_json(ws, {"type": "mine_fail", "reason": "too_far"})
+                    continue
+
+                # Zone protection
+                zone_err = check_zone_permission(wx, wy, user_id, is_admin)
+                if zone_err:
+                    await send_json(ws, {"type": "mine_fail", "reason": zone_err})
+                    continue
+
                 tile = world.get_tile(wx, wy)
 
-                if tile in MINABLE_TILES:
-                    item_name, drop_per_mine, duration, max_hp = MINABLE_TILES[tile]
+                minfo = MINABLE.get(tile)
+                if minfo:
+                    item_name = minfo["item"]
+                    drop_per_mine = minfo["drop"]
+                    duration = minfo["time"]
+                    max_hp = minfo["hp"]
                     current_hp = world.get_ore_hp(wx, wy)
                     if current_hp is None:
                         current_hp = max_hp
@@ -450,6 +526,7 @@ async def websocket_endpoint(ws: WebSocket):
                                 "hp": remaining_hp, "max_hp": max_hp,
                             })
 
+                        save_player(ws_id, player)
                         await send_json(ws, {
                             "type": "inventory",
                             "inventory": player.inventory_dict(),
@@ -466,30 +543,83 @@ async def websocket_endpoint(ws: WebSocket):
                 item_name = msg["item"]
                 wx, wy = msg["wx"], msg["wy"]
 
+                # Zone protection
+                zone_err = check_zone_permission(wx, wy, user_id, is_admin)
+                if zone_err:
+                    await send_json(ws, {"type": "build_fail", "reason": zone_err})
+                    continue
+
                 if item_name not in BUILDABLE:
                     await send_json(ws, {"type": "build_fail", "reason": "unknown_item"})
                     continue
 
-                tile_id, cost = BUILDABLE[item_name]
+                # Research is enforced at craft time — if player has the crafted item, they researched it
+                binfo = BUILDABLE[item_name]
+                tile_id = binfo["tile_id"]
+                cost = binfo["cost"]
                 current_tile = world.get_tile(wx, wy)
 
                 if not player.has_items(cost):
                     await send_json(ws, {"type": "build_fail", "reason": "no_resources"})
                     continue
-                if current_tile in SOLID_TILES or current_tile == WALL or current_tile >= 200:
+                if current_tile in SOLID_TILES or current_tile >= 100:
                     await send_json(ws, {"type": "build_fail", "reason": "blocked"})
                     continue
 
+                # Remember what was under it for restoration on removal
+                original_tile = world.get_tile(wx, wy)
                 player.remove_items(cost)
                 world.set_tile(wx, wy, tile_id)
                 db.save_world_mod(wx, wy, tile_id)
+                building_owners[(wx, wy)] = {"user_id": user_id, "original_tile": original_tile}
+                db.save_building_owner(wx, wy, user_id, original_tile)
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": tile_id})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": item_name, "wx": wx, "wy": wy})
 
+            elif msg_type == "remove_building":
+                wx, wy = msg["wx"], msg["wy"]
+                tile = world.get_tile(wx, wy)
+                bdata = building_owners.get((wx, wy))
+
+                removable = {WALL, FLOOR, SIGN}
+                if tile not in removable:
+                    await send_json(ws, {"type": "build_fail", "reason": "not_a_building"})
+                    continue
+                if not bdata or bdata["user_id"] != user_id:
+                    await send_json(ws, {"type": "build_fail", "reason": "not_yours"})
+                    continue
+
+                # Return crafted item
+                TILE_TO_ITEM = {WALL: "stone_wall", FLOOR: "stone_path", SIGN: "sign"}
+                refund_item = TILE_TO_ITEM.get(tile)
+                if refund_item:
+                    player.add_item(refund_item, 1)
+
+                if tile == SIGN:
+                    db.delete_sign(wx, wy)
+                    await broadcast_json({"type": "sign_removed", "wx": wx, "wy": wy})
+
+                # Restore original tile (sand, grass, etc.) instead of always dirt
+                restore_tile = bdata.get("original_tile", DIRT)
+                # Remove the modification to let original terrain show through
+                world._modifications.pop((wx, wy), None)
+                db.delete_world_mod(wx, wy)
+                building_owners.pop((wx, wy), None)
+                db.delete_building_owner(wx, wy)
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": restore_tile})
+                await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                await send_json(ws, {"type": "build_success", "item": "removed", "wx": wx, "wy": wy})
+
             elif msg_type == "place_machine":
+              try:
                 machine_type = msg["machine_type"]
                 wx, wy = msg["wx"], msg["wy"]
+
+                zone_err = check_zone_permission(wx, wy, user_id, is_admin)
+                if zone_err:
+                    await send_json(ws, {"type": "build_fail", "reason": zone_err})
+                    continue
 
                 if machine_type not in MACHINE_COSTS:
                     await send_json(ws, {"type": "build_fail", "reason": "unknown_machine"})
@@ -508,16 +638,24 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json(ws, {"type": "build_fail", "reason": "occupied"})
                     continue
 
+                original_tile = world.get_tile(wx, wy)
                 player.remove_items(cost)
                 machine = machine_mgr.place(machine_type, wx, wy, str(user_id))
                 world.set_tile(wx, wy, machine_type)
                 db.save_world_mod(wx, wy, machine_type)
+                building_owners[(wx, wy)] = {"user_id": user_id, "original_tile": original_tile}
+                db.save_building_owner(wx, wy, user_id, original_tile)
                 db.save_machine(machine)
 
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": machine_type})
                 await broadcast_json({"type": "machine_state", "machine": machine.to_dict()})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": MACHINE_NAMES[machine_type], "wx": wx, "wy": wy})
+              except Exception as e:
+                import traceback
+                print(f"[ERROR] place_machine failed: {e}")
+                traceback.print_exc()
+                await send_json(ws, {"type": "build_fail", "reason": "server_error"})
 
             elif msg_type == "interact_machine":
                 wx, wy = msg["wx"], msg["wy"]
@@ -563,15 +701,29 @@ async def websocket_endpoint(ws: WebSocket):
                 wx, wy = msg["wx"], msg["wy"]
                 machine = machine_mgr.get_at(wx, wy)
                 if machine and machine.owner_id == str(user_id):
+                    # Return contents to player
                     for item, count in machine.inventory.items():
                         player.add_item(item, count)
                     for item, count in machine.output.items():
                         player.add_item(item, count)
+                    # Return machine item to inventory (for chests)
+                    MACHINE_TO_ITEM = {204: "wood_chest", 205: "stone_chest", 206: "copper_chest", 207: "iron_chest"}
+                    refund = MACHINE_TO_ITEM.get(machine.machine_type)
+                    if refund:
+                        player.add_item(refund, 1)
+
                     machine_mgr.remove(wx, wy)
-                    world.set_tile(wx, wy, DIRT)
-                    db.save_world_mod(wx, wy, DIRT)
+
+                    # Restore original tile
+                    bdata = building_owners.get((wx, wy))
+                    restore_tile = bdata["original_tile"] if bdata else DIRT
+                    world._modifications.pop((wx, wy), None)
+                    db.delete_world_mod(wx, wy)
+                    building_owners.pop((wx, wy), None)
+                    db.delete_building_owner(wx, wy)
                     db.delete_machine(wx, wy)
-                    await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": DIRT})
+
+                    await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": restore_tile})
                     await broadcast_json({"type": "machine_removed", "wx": wx, "wy": wy})
                     await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
 
@@ -611,6 +763,108 @@ async def websocket_endpoint(ws: WebSocket):
                     pr.cancel()
                     await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                     await send_json(ws, {"type": "research_update", "research": pr.to_dict()})
+
+            elif msg_type == "hand_craft":
+                recipe_id = msg.get("item", "")
+                qty = min(max(msg.get("qty", 1), 1), 100)
+
+                if recipe_id not in HAND_RECIPES:
+                    await send_json(ws, {"type": "craft_fail", "reason": "unknown"})
+                    continue
+
+                recipe = HAND_RECIPES[recipe_id]
+                # Check player can afford qty * cost
+                total_cost = {k: v * qty for k, v in recipe["cost"].items()}
+                if not player.has_items(total_cost):
+                    await send_json(ws, {"type": "craft_fail", "reason": "no_resources"})
+                    continue
+
+                # Check research requirements (from registry)
+                required = recipe.get("research")
+                pr = player_research.get(ws_id)
+                if required and (not pr or not pr.is_completed(required)):
+                    await send_json(ws, {"type": "craft_fail", "reason": "not_researched"})
+                    continue
+
+                # Deduct resources, add crafted items
+                player.remove_items(total_cost)
+                produced = recipe["qty"] * qty
+                player.add_item(recipe_id, produced)
+
+                # Immediate save
+                save_player(ws_id, player)
+
+                await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                await send_json(ws, {
+                    "type": "craft_success",
+                    "item": recipe_id, "qty": produced,
+                })
+
+            elif msg_type == "place_claim":
+                # Player uses a claim flag at their current position
+                if not player.remove_item("claim_flag", 1):
+                    await send_json(ws, {"type": "build_fail", "reason": "no_resources"})
+                    continue
+
+                tile_x = int(player.x // TILE_PX)
+                tile_y = int(player.y // TILE_PX)
+
+                # Check not in spawn zone
+                zone = get_zone_at(tile_x, tile_y)
+                if zone["admin_only"]:
+                    player.add_item("claim_flag", 1)  # refund
+                    await send_json(ws, {"type": "build_fail", "reason": "protected_zone"})
+                    continue
+                if zone.get("claimed"):
+                    player.add_item("claim_flag", 1)
+                    await send_json(ws, {"type": "build_fail", "reason": "already_claimed"})
+                    continue
+
+                claim = db.create_claim(user_id, tile_x, tile_y)
+                if not claim:
+                    player.add_item("claim_flag", 1)
+                    await send_json(ws, {"type": "build_fail", "reason": "claim_limit"})
+                    continue
+
+                # Update active claims
+                all_claims = db.get_all_claims()
+                set_active_claims(all_claims)
+
+                await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                await broadcast_json({
+                    "type": "claim_placed",
+                    "claim": claim,
+                })
+                await send_json(ws, {"type": "build_success", "item": "Claim Flag", "wx": tile_x, "wy": tile_y})
+
+            elif msg_type == "rename_claim":
+                claim_id = msg.get("claim_id")
+                name = re.sub(r'[<>&]', '', msg.get("name", "").strip()[:30])
+                if claim_id and name:
+                    if db.rename_claim(claim_id, user_id, name):
+                        all_claims = db.get_all_claims()
+                        set_active_claims(all_claims)
+                        await broadcast_json({"type": "claims_updated", "claims": all_claims})
+
+            elif msg_type == "set_sign_text":
+                wx, wy = msg["wx"], msg["wy"]
+                text = msg.get("text", "").strip()[:150]
+                text = re.sub(r'[<>&]', '', text)
+                text = re.sub(r'[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]', '', text)  # preserve newlines
+                tile = world.get_tile(wx, wy)
+                bdata = building_owners.get((wx, wy))
+                if tile == SIGN and bdata and bdata["user_id"] == user_id and text:
+                    db.save_sign(wx, wy, text, user_id)
+                    await broadcast_json({
+                        "type": "sign_data",
+                        "sign": {"wx": wx, "wy": wy, "text": text, "owner_id": user_id},
+                    })
+
+            elif msg_type == "get_sign":
+                wx, wy = msg["wx"], msg["wy"]
+                sign = db.get_sign(wx, wy)
+                if sign:
+                    await send_json(ws, {"type": "sign_data", "sign": sign})
 
             elif msg_type == "chat":
                 text = msg.get("text", "").strip()[:200]
@@ -655,6 +909,9 @@ async def game_loop():
 
         events = machine_mgr.tick(dt, world)
 
+        # Tick NPC AI
+        npc_mgr.tick(dt, world)
+
         # Tick research for all online players (every tick = 0.1s)
         for ws_id, pr in list(player_research.items()):
             completed = pr.tick(dt)
@@ -677,6 +934,8 @@ async def game_loop():
             respawn_check_counter = 0
             respawned = world.tick_respawns()
             for wx, wy, tile_id in respawned:
+                # Delete the DB modification so it doesn't reload as dirt
+                db.delete_world_mod(wx, wy)
                 await broadcast_json({
                     "type": "tile_update",
                     "wx": wx, "wy": wy, "tile": tile_id,
@@ -684,9 +943,11 @@ async def game_loop():
 
         if connections:
             all_players = players.get_all()
+            all_npcs = npc_mgr.get_all()
             state = {
                 "type": "state",
                 "players": [p.to_dict() for p in all_players],
+                "npcs": [a.to_dict() for a in all_npcs],
                 "t": time.time(),
             }
             msg = json.dumps(state)

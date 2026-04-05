@@ -5,23 +5,33 @@ import { generateTileset, getTileIndex, generatePlayerTextures, TILE_SIZE } from
 
 const TILE_PX = TILE_SIZE;
 
-const TILE_LABELS = {
-  0: 'Deep Water', 1: 'Water', 2: 'Sand', 3: 'Dirt',
-  4: 'Alien Grass', 5: 'Rock', 6: 'Dense Rock',
-  7: 'Iron Ore', 8: 'Copper Ore', 9: 'Alien Flora',
-  10: 'Crystal', 11: 'Alien Tree', 100: 'Wall', 101: 'Floor',
-  200: 'Auto-Miner', 201: 'Fabricator', 202: 'Storage Crate', 203: 'Furnace',
-};
+import { ITEM_INFO, loadRegistry } from './HUDScene.js';
 
-// Item key -> build/place action (used when toolbar slot is active and you click the world)
-const ITEM_ACTIONS = {
-  _build_wall:    { type: 'build', item: 'wall' },
-  _build_floor:   { type: 'build', item: 'floor' },
-  _build_miner:   { type: 'machine', machine_type: 200 },
-  _build_furnace: { type: 'machine', machine_type: 203 },
-  _build_fab:     { type: 'machine', machine_type: 201 },
-  _build_storage: { type: 'machine', machine_type: 202 },
-};
+// Built dynamically from server registry on init
+let TILE_LABELS = {};
+let ITEM_ACTIONS = {};
+let MINABLE_TILE_IDS = [];
+
+function buildClientRegistry(data) {
+  // Tile labels from server
+  TILE_LABELS = {};
+  for (const [tid, tile] of Object.entries(data.tiles || {})) {
+    TILE_LABELS[Number(tid)] = tile.label;
+  }
+
+  // Item actions from ITEM_INFO (populated by loadRegistry)
+  ITEM_ACTIONS = {};
+  for (const [key, info] of Object.entries(ITEM_INFO)) {
+    if (info.placeable) ITEM_ACTIONS[key] = info.placeable;
+  }
+  // Machine toolbar items
+  for (const [tid, machine] of Object.entries(data.machines || {})) {
+    ITEM_ACTIONS[`_build_machine_${tid}`] = { type: 'machine', machine_type: Number(tid) };
+  }
+
+  // Minable tile IDs from server
+  MINABLE_TILE_IDS = Object.keys(data.minable || {}).map(Number);
+}
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -45,6 +55,12 @@ export class GameScene extends Phaser.Scene {
     this.mineProgress = 0;
     this.mineDuration = 0;
     this.machineIcons = {};
+    this.npcSprites = {};     // id -> sprite
+    this.npcTargets = {};     // id -> {tx, ty}
+    this.signs = {};
+    this.signTooltip = null;
+    this.claimBorders = [];
+    this.npcHpBars = {};      // id -> graphics
     this.cursorWX = 0;
     this.cursorWY = 0;
   }
@@ -133,6 +149,10 @@ export class GameScene extends Phaser.Scene {
       this.hud.closeWorldMap();
       return;
     }
+    if (this.hud.craftDetailOpen) {
+      this.hud._closeCraftDetail();
+      return;
+    }
     if (this.hud.craftingOpen) {
       this.hud.closeCrafting();
       return;
@@ -156,6 +176,7 @@ export class GameScene extends Phaser.Scene {
     this.hud.activeToolbarSlot = -1;
     this.hud._renderToolbar();
     this.buildPreview.clear();
+    if (this._ghostSprite) { this._ghostSprite.destroy(); this._ghostSprite = null; }
   }
 
   // ── Tile helpers ──
@@ -175,7 +196,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   _isSolidTile(tileId) {
-    return tileId === 0 || tileId === 1 || tileId === 6 || tileId === 11 || tileId === 100 || tileId >= 200;
+    // Use registry data if available, fallback to hardcoded
+    const reg = this._serverRegistry?.tiles?.[String(tileId)];
+    if (reg) return reg.solid;
+    return tileId >= 200; // machines always solid
   }
 
   _checkCollision(x, y) {
@@ -201,9 +225,17 @@ export class GameScene extends Phaser.Scene {
     const { wx, wy } = this._worldToTile(pointer.worldX, pointer.worldY);
 
     // Check if active toolbar slot has a build action
+    // Range check for all placement/mining — 3 tiles
+    const ptx = Math.floor(this.myPlayer.x / TILE_PX);
+    const pty = Math.floor(this.myPlayer.y / TILE_PX);
+    const inRange = Math.abs(wx - ptx) <= 3 && Math.abs(wy - pty) <= 3;
+
     const activeItem = this.hud?.getActiveToolbarItem();
     const action = activeItem ? ITEM_ACTIONS[activeItem] : null;
+    console.log('[GROUND] activeItem:', activeItem, 'action:', action, 'inRange:', inRange);
     if (action) {
+      if (!inRange) { this.hud.showToast('Too far'); return; }
+      console.log('[GROUND] Sending place_machine:', action.machine_type, 'at', wx, wy);
       if (action.type === 'build') {
         this.socket.send({ type: 'build', item: action.item, wx, wy });
       } else if (action.type === 'machine') {
@@ -213,16 +245,29 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (pointer.rightButtonDown()) {
+      if (!inRange) { this.hud.showToast('Too far'); return; }
       const tile = this._getTileAt(wx, wy);
       if (tile >= 200) {
-        this.socket.send({ type: 'interact_machine', wx, wy });
+        // Right-click machine/chest = pick up
+        this.socket.send({ type: 'remove_machine', wx, wy });
+      } else if (tile === 100 || tile === 101 || tile === 102) {
+        this.socket.send({ type: 'remove_building', wx, wy });
       }
       return;
     }
 
     const tile = this._getTileAt(wx, wy);
     if (tile < 0) return;
-    if ([5, 6, 7, 8, 9, 10, 11, 100].includes(tile)) {
+
+    if (!inRange) { this.hud.showToast('Too far'); return; }
+
+    // Left-click on machine/chest = open inventory UI
+    if (tile >= 200) {
+      this.socket.send({ type: 'interact_machine', wx, wy });
+      return;
+    }
+
+    if (MINABLE_TILE_IDS.includes(tile)) {
       this.socket.send({ type: 'mine_start', wx, wy });
     }
   }
@@ -234,15 +279,53 @@ export class GameScene extends Phaser.Scene {
     this.cursorWY = wy;
 
     const tile = this._getTileAt(wx, wy);
-    this.hud.updateTileInfo(`[${wx}, ${wy}] ${TILE_LABELS[tile] || '???'}`);
+    const tileLabel = TILE_LABELS[tile] || '???';
+    const signData = this.signs[`${wx},${wy}`];
+    if (signData) {
+      this.hud.updateTileInfo(`[${wx}, ${wy}] Sign: "${signData.text}"`);
+      // Show floating tooltip near cursor
+      if (!this.signTooltip) {
+        this.signTooltip = this.add.text(0, 0, '', {
+          fontSize: '12px', fontFamily: 'monospace', color: '#ffeecc',
+          backgroundColor: '#222211dd', padding: { x: 8, y: 6 },
+          wordWrap: { width: 250 },
+        }).setDepth(300);
+      }
+      this.signTooltip.setText(signData.text);
+      this.signTooltip.setPosition(pointer.worldX + 20, pointer.worldY - 30);
+      this.signTooltip.setVisible(true);
+    } else {
+      this.hud.updateTileInfo(`[${wx}, ${wy}] ${tileLabel}`);
+      if (this.signTooltip) this.signTooltip.setVisible(false);
+    }
 
     this.buildPreview.clear();
+    if (this._ghostSprite) { this._ghostSprite.destroy(); this._ghostSprite = null; }
+
     const activeItem = this.hud?.getActiveToolbarItem();
     const hasAction = activeItem && ITEM_ACTIONS[activeItem];
     if (hasAction) {
-      this.buildPreview.fillStyle(0xffaa00, 0.25);
-      this.buildPreview.fillRect(wx * TILE_PX, wy * TILE_PX, TILE_PX, TILE_PX);
-      this.buildPreview.lineStyle(2, 0xffaa00, 0.8);
+      // Show ghost tile preview from tileset
+      const action = ITEM_ACTIONS[activeItem];
+      let ghostTileId = action.tileId ?? action.machine_type ?? null;
+      if (ghostTileId !== null) {
+        const idx = getTileIndex(ghostTileId);
+        const tilesetImg = this.textures.get('tileset').getSourceImage();
+        // Draw ghost tile to a temp canvas
+        const ghostKey = '_ghost_tile';
+        if (this.textures.exists(ghostKey)) this.textures.remove(ghostKey);
+        const gc = this.textures.createCanvas(ghostKey, TILE_PX, TILE_PX);
+        gc.context.drawImage(tilesetImg, idx * TILE_PX, 0, TILE_PX, TILE_PX, 0, 0, TILE_PX, TILE_PX);
+        gc.refresh();
+        this._ghostSprite = this.add.sprite(wx * TILE_PX, wy * TILE_PX, ghostKey)
+          .setOrigin(0, 0).setDepth(140).setAlpha(0.5);
+      }
+
+      // Range indicator
+      const ptx = Math.floor(this.myPlayer.x / TILE_PX);
+      const pty = Math.floor(this.myPlayer.y / TILE_PX);
+      const inR = Math.abs(wx - ptx) <= 3 && Math.abs(wy - pty) <= 3;
+      this.buildPreview.lineStyle(2, inR ? 0x00ff88 : 0xff4444, 0.7);
       this.buildPreview.strokeRect(wx * TILE_PX, wy * TILE_PX, TILE_PX, TILE_PX);
     }
   }
@@ -254,7 +337,103 @@ export class GameScene extends Phaser.Scene {
     const tile = this._getTileAt(this.cursorWX, this.cursorWY);
     if (tile >= 200) {
       this.socket.send({ type: 'interact_machine', wx: this.cursorWX, wy: this.cursorWY });
+    } else if (tile === 102) {
+      // E on sign — edit text (if owner)
+      this._promptSignText(this.cursorWX, this.cursorWY);
     }
+  }
+
+  _drawClaimBorders() {
+    // Clear old borders
+    for (const b of this.claimBorders) b.destroy();
+    this.claimBorders = [];
+
+    const r = this._claimRadius || 12;
+
+    // Draw spawn zone border
+    if (this._serverRegistry?.zones?.spawn) {
+      const sz = this._serverRegistry.zones.spawn;
+      const gfx = this.add.graphics().setDepth(45);
+      gfx.lineStyle(2, 0x44aa66, 0.4);
+      const sx = (sz.center_x - sz.radius) * TILE_PX;
+      const sy = (sz.center_y - sz.radius) * TILE_PX;
+      const sw = sz.radius * 2 * TILE_PX;
+      gfx.strokeRect(sx, sy, sw, sw);
+      // Label
+      const label = this.add.text(sx + 4, sy + 2, 'Spawn Point', {
+        fontSize: '10px', fontFamily: 'monospace', color: '#44aa6688',
+      }).setDepth(46);
+      this.claimBorders.push(gfx, label);
+    }
+
+    // Draw player claim borders
+    for (const claim of (this._claims || [])) {
+      const gfx = this.add.graphics().setDepth(45);
+      gfx.lineStyle(2, 0x44cc44, 0.5);
+      const cx = (claim.center_x - r) * TILE_PX;
+      const cy = (claim.center_y - r) * TILE_PX;
+      const size = (r * 2 + 1) * TILE_PX;
+      gfx.strokeRect(cx, cy, size, size);
+
+      // Claim name label
+      const label = this.add.text(cx + 4, cy + 2, claim.name, {
+        fontSize: '10px', fontFamily: 'monospace',
+        color: '#44cc4488',
+      }).setDepth(46);
+
+      this.claimBorders.push(gfx, label);
+    }
+  }
+
+  _promptSignText(wx, wy) {
+    // DOM-based text input popup
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed; inset:0; z-index:10000;
+      display:flex; align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.6);
+    `;
+
+    const box = document.createElement('div');
+    box.style.cssText = `
+      background:#161b22; border:1px solid #8c6e3c; border-radius:10px;
+      padding:24px; width:320px; text-align:center; font-family:monospace;
+    `;
+    box.innerHTML = `
+      <div style="color:#cc9944; font-size:16px; font-weight:bold; margin-bottom:12px;">SIGN TEXT</div>
+      <textarea id="sign-text-input" rows="3" maxlength="150" placeholder="Enter sign text..."
+        style="width:100%; padding:8px; background:#0d1117; border:1px solid #30363d;
+        border-radius:6px; color:#e6edf3; font-size:13px; font-family:monospace;
+        resize:none; outline:none;"></textarea>
+      <div style="display:flex; gap:10px; margin-top:12px;">
+        <button id="sign-save-btn" style="flex:1; padding:8px; background:#44aa44; border:none;
+          border-radius:6px; color:#fff; font-size:13px; font-family:monospace; cursor:pointer;">Save</button>
+        <button id="sign-cancel-btn" style="flex:1; padding:8px; background:#30363d; border:none;
+          border-radius:6px; color:#ccc; font-size:13px; font-family:monospace; cursor:pointer;">Cancel</button>
+      </div>
+    `;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    const input = document.getElementById('sign-text-input');
+    const existing = this.signs[`${wx},${wy}`];
+    if (existing) input.value = existing.text;
+    setTimeout(() => input.focus(), 50);
+
+    const close = () => { overlay.remove(); };
+
+    document.getElementById('sign-save-btn').onclick = () => {
+      const text = input.value.trim();
+      if (text) {
+        this.socket.send({ type: 'set_sign_text', wx, wy, text });
+      }
+      close();
+    };
+    document.getElementById('sign-cancel-btn').onclick = close;
+    overlay.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') close();
+    });
   }
 
   _withdrawFromMachine() {
@@ -312,7 +491,21 @@ export class GameScene extends Phaser.Scene {
       this.myId = msg.player.id;
       this.chunkSize = msg.chunkSize;
       this.inventory = msg.inventory || {};
-      this.recipes = msg.recipes || {};
+      this.tileSpeeds = msg.tileSpeeds || {};
+
+      // Load data-driven registry from server
+      loadRegistry(msg);
+      buildClientRegistry(msg);
+      this._serverRegistry = msg;
+      // Notify HUD that registry is ready — toolbar can now render properly
+      hud.onRegistryLoaded();
+      this._claims = msg.claims || [];
+      this._claimRadius = msg.claimRadius || 12;
+      // Store user_id from the player data (server sends it in the JWT)
+      this._myUserId = null; // will be set from claims context
+
+      // Store crafting menu from server
+      hud.craftingMenuData = msg.craftingMenu || [];
 
       // Load research tree
       hud.researchTree = msg.researchTree || {};
@@ -336,8 +529,11 @@ export class GameScene extends Phaser.Scene {
       this.time.delayedCall(2000, () => hud.hideStatus());
       hud.updateInventory(this.inventory);
 
+      // Draw claim borders + spawn zone outline
+      this.time.delayedCall(500, () => this._drawClaimBorders());
+
       // Recipe keys (F1-F5) when machine UI is open
-      const recipeNames = Object.keys(this.recipes);
+      const recipeNames = Object.keys(msg.machineRecipes || {});
       recipeNames.forEach((name, i) => {
         if (i > 8) return;
         this.input.keyboard.on(`keydown-F${i + 1}`, () => {
@@ -415,16 +611,63 @@ export class GameScene extends Phaser.Scene {
       hud.showToast(`Research failed: ${msg.reason}`);
     });
 
+    // Crafting
+    // Claims
+    this.socket.on('claim_placed', (msg) => {
+      this._claims.push(msg.claim);
+      this._drawClaimBorders();
+    });
+    this.socket.on('claims_updated', (msg) => {
+      this._claims = msg.claims || [];
+      this._drawClaimBorders();
+    });
+
+    // Signs
+    this.socket.on('sign_data', (msg) => {
+      const s = msg.sign;
+      this.signs[`${s.wx},${s.wy}`] = { text: s.text, owner_id: s.owner_id };
+    });
+    this.socket.on('sign_removed', (msg) => {
+      delete this.signs[`${msg.wx},${msg.wy}`];
+    });
+
+    this.socket.on('craft_success', (msg) => {
+      hud.showToast(`Crafted ${msg.qty}x ${msg.item}`);
+    });
+    this.socket.on('craft_fail', (msg) => {
+      const reasons = {
+        no_resources: 'Not enough resources',
+        not_researched: 'Research required first',
+        unknown: 'Unknown recipe',
+      };
+      hud.showToast(reasons[msg.reason] || 'Craft failed');
+    });
+
     // Chat
     this.socket.on('chat', (msg) => {
       hud.addChatMessage(msg.name, msg.text);
     });
 
-    this.socket.on('build_success', (msg) => hud.showToast(`Built ${msg.item}`));
+    this.socket.on('build_success', (msg) => {
+      const names = { wall: 'Stone Wall', floor: 'Stone Path', sign: 'Sign', removed: 'Removed' };
+      hud.showToast(`Built ${names[msg.item] || msg.item}`);
+
+      // Prompt for sign text after placing
+      if (msg.item === 'sign') {
+        this._promptSignText(msg.wx, msg.wy);
+      }
+    });
 
     this.socket.on('build_fail', (msg) => {
       const reasons = {
         no_resources: 'Not enough resources', blocked: 'Can\'t build here',
+        not_researched: 'Research required first (R)',
+        not_yours: 'Not yours to remove',
+        not_a_building: 'Not a building',
+        protected_zone: 'Protected zone — admin only',
+        claimed_land: 'Claimed by another player',
+        already_claimed: 'This area is already claimed',
+        claim_limit: 'Claim limit reached (max 5)',
         unknown_item: 'Unknown item', unknown_machine: 'Unknown machine', occupied: 'Already occupied',
       };
       hud.showToast(reasons[msg.reason] || 'Build failed');
@@ -474,6 +717,24 @@ export class GameScene extends Phaser.Scene {
           this.otherPlayers[id].destroy(); delete this.otherPlayers[id];
           if (this.nameTexts[id]) { this.nameTexts[id].destroy(); delete this.nameTexts[id]; }
           delete this._otherTargets[id];
+        }
+      }
+
+      // NPC animals
+      const npcSeen = new Set();
+      for (const npc of (msg.npcs || [])) {
+        npcSeen.add(npc.id);
+        if (!this.npcSprites[npc.id]) {
+          const texKey = `npc_${npc.type}`;
+          this.npcSprites[npc.id] = this.add.sprite(npc.x, npc.y, texKey).setDepth(95);
+        }
+        this.npcTargets[npc.id] = { tx: npc.x, ty: npc.y, hp: npc.hp, maxHp: npc.max_hp };
+      }
+      for (const id of Object.keys(this.npcSprites)) {
+        if (!npcSeen.has(id)) {
+          this.npcSprites[id].destroy(); delete this.npcSprites[id];
+          delete this.npcTargets[id];
+          if (this.npcHpBars[id]) { this.npcHpBars[id].destroy(); delete this.npcHpBars[id]; }
         }
       }
     });
@@ -614,6 +875,32 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // Smooth interpolation of NPCs + HP bars
+    for (const [id, target] of Object.entries(this.npcTargets)) {
+      const sprite = this.npcSprites[id];
+      if (!sprite) continue;
+      sprite.x = Phaser.Math.Linear(sprite.x, target.tx, 0.12);
+      sprite.y = Phaser.Math.Linear(sprite.y, target.ty, 0.12);
+
+      // HP bar above NPC (only show if damaged)
+      if (target.hp < target.maxHp) {
+        if (!this.npcHpBars[id]) {
+          this.npcHpBars[id] = this.add.graphics().setDepth(96);
+        }
+        const hpGfx = this.npcHpBars[id];
+        const barW = 24;
+        const barH = 3;
+        const bx = sprite.x - barW / 2;
+        const by = sprite.y - 20;
+        const pct = target.hp / target.maxHp;
+        hpGfx.clear();
+        hpGfx.fillStyle(0x000000, 0.6);
+        hpGfx.fillRect(bx, by, barW, barH);
+        hpGfx.fillStyle(pct > 0.5 ? 0x44cc44 : (pct > 0.25 ? 0xccaa44 : 0xcc4444), 1);
+        hpGfx.fillRect(bx, by, barW * pct, barH);
+      }
+    }
+
     // Block movement when chat is open
     if (this.hud?.chatOpen) return;
 
@@ -628,8 +915,16 @@ export class GameScene extends Phaser.Scene {
     if (dx !== 0 || dy !== 0) {
       if (this.isMining) this._cancelAll();
 
-      const newX = this.myPlayer.x + dx * this.speed * dt;
-      const newY = this.myPlayer.y + dy * this.speed * dt;
+      // Tile-based speed modifier
+      const currentTile = this._getTileAt(
+        Math.floor(this.myPlayer.x / TILE_PX),
+        Math.floor(this.myPlayer.y / TILE_PX)
+      );
+      const tileSpeedMod = this.tileSpeeds?.[String(currentTile)] ?? 1.0;
+      const moveSpeed = this.speed * tileSpeedMod;
+
+      const newX = this.myPlayer.x + dx * moveSpeed * dt;
+      const newY = this.myPlayer.y + dy * moveSpeed * dt;
       let finalX = this.myPlayer.x, finalY = this.myPlayer.y;
       if (!this._checkCollision(newX, this.myPlayer.y)) finalX = newX;
       if (!this._checkCollision(finalX, newY)) finalY = newY;
@@ -651,15 +946,63 @@ export class GameScene extends Phaser.Scene {
     const ty = Math.floor(this.myPlayer.y / TILE_PX);
     const cx = Math.floor(this.myPlayer.x / (this.chunkSize * TILE_PX));
     const cy = Math.floor(this.myPlayer.y / (this.chunkSize * TILE_PX));
+    // Determine current zone
+    let zoneName = 'The Wilds';
+    let zoneColor = '#888888';
+    if (this._serverRegistry?.zones) {
+      for (const [zid, zone] of Object.entries(this._serverRegistry.zones)) {
+        const dx = Math.abs(tx - zone.center_x);
+        const dy = Math.abs(ty - zone.center_y);
+        if (dx <= zone.radius && dy <= zone.radius) {
+          zoneName = zone.name;
+          zoneColor = zone.color;
+          break;
+        }
+      }
+    }
+    // Check player claims
+    if (zoneName === 'The Wilds' && this._claims) {
+      for (const claim of this._claims) {
+        if (Math.abs(tx - claim.center_x) <= this._claimRadius &&
+            Math.abs(ty - claim.center_y) <= this._claimRadius) {
+          zoneName = claim.name;
+          zoneColor = '#44cc44';
+          break;
+        }
+      }
+    }
+
     this.hud.updateCoords(
-      `Pos: ${tx}, ${ty} | Chunk: ${cx}, ${cy} | Players: ${Object.keys(this.otherPlayers).length + 1}`
+      `${tx}, ${ty} | ${zoneName} | Players: ${Object.keys(this.otherPlayers).length + 1}`
     );
+    this.hud.updateZone(zoneName, zoneColor);
 
     // Update minimap with player positions
     const others = Object.values(this.otherPlayers).map(s => ({ x: s.x, y: s.y }));
     this.hud.updateMinimapEntities(this.myPlayer.x, this.myPlayer.y, this.chunkSize, others, []);
 
+    // Process menu bar clicks
+    if (window._gameMenuAction) {
+      const action = window._gameMenuAction;
+      window._gameMenuAction = null;
+      if (action === 'toggleInventory') this.hud.toggleInventory();
+      else if (action === 'toggleCrafting') this.hud.toggleCrafting();
+      else if (action === 'toggleResearch') this.hud.toggleResearch();
+      else if (action === 'toggleWorldMap') this.hud.toggleWorldMap();
+      else if (action === 'toggleCharacter') this.hud.showToast('Character sheet coming soon');
+      else if (action === 'toggleSettings') this.hud.showToast('Settings coming soon');
+    }
+
     // Chat fade
     this.hud.updateChat();
+
+    // Tick research progress client-side
+    if (this.hud.researchState?.active && this.hud.researchTree) {
+      const node = this.hud.researchTree[this.hud.researchState.active];
+      if (node) {
+        this.hud.researchState.progress += dt;
+        if (this.hud.researchOpen) this.hud.updateResearchProgress();
+      }
+    }
   }
 }
