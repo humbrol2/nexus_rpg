@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpaceColony</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a12; overflow: hidden; font-family: 'Segoe UI', monospace; color: #ccc; }
+    canvas { display: block; }
+
+    /* Auth screen */
+    #auth-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, #0d1117 0%, #010409 100%);
+    }
+    #auth-screen.hidden { display: none; }
+    .auth-box {
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 12px; padding: 40px; width: 360px; text-align: center;
+    }
+    .auth-box h1 { font-size: 28px; color: #00ff88; margin-bottom: 6px; letter-spacing: 2px; }
+    .auth-box .subtitle { color: #666; font-size: 13px; margin-bottom: 28px; }
+    .auth-box input {
+      width: 100%; padding: 10px 14px; margin-bottom: 12px;
+      background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+      color: #e6edf3; font-size: 14px; font-family: monospace; outline: none;
+    }
+    .auth-box input:focus { border-color: #00ff88; }
+    .auth-box .btn-row { display: flex; gap: 10px; margin-top: 8px; }
+    .auth-box button {
+      flex: 1; padding: 10px; border: none; border-radius: 6px;
+      font-size: 14px; font-family: monospace; cursor: pointer; transition: opacity 0.2s;
+    }
+    .auth-box button:hover { opacity: 0.85; }
+    .btn-login { background: #00ff88; color: #000; font-weight: bold; }
+    .btn-register { background: #30363d; color: #ccc; }
+    .auth-error { color: #ff6b6b; font-size: 12px; margin-top: 12px; min-height: 18px; }
+
+    /* Top-right menu bar */
+    #menu-bar {
+      position: fixed; top: 10px; right: 10px; z-index: 8000;
+      display: none; gap: 8px; align-items: center;
+    }
+    #menu-bar.visible { display: flex; }
+    #menu-bar span { color: #00ff88; font-size: 13px; font-family: monospace; }
+    #menu-bar button {
+      padding: 5px 12px; border: 1px solid #30363d; border-radius: 4px;
+      background: #161b22; color: #ccc; font-size: 12px; font-family: monospace;
+      cursor: pointer; transition: background 0.2s;
+    }
+    #menu-bar button:hover { background: #30363d; }
+    #btn-admin { color: #ffcc44; border-color: #ffcc44; }
+
+    /* Admin panel */
+    #admin-panel {
+      position: fixed; top: 50px; right: 10px; z-index: 8500;
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 16px; width: 380px; max-height: 500px; overflow-y: auto;
+      display: none; font-family: monospace;
+    }
+    #admin-panel.visible { display: block; }
+    #admin-panel h3 { color: #ffcc44; margin-bottom: 12px; font-size: 15px; }
+    .admin-user-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 12px;
+    }
+    .admin-user-row .name { color: #e6edf3; flex: 1; }
+    .admin-user-row .badges { margin: 0 8px; }
+    .admin-user-row .badge {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: 10px; margin-left: 4px;
+    }
+    .badge-admin { background: #ffcc44; color: #000; }
+    .badge-banned { background: #ff4444; color: #fff; }
+    .admin-user-row .actions { display: flex; gap: 4px; }
+    .admin-user-row .actions button {
+      padding: 2px 8px; border: 1px solid #30363d; border-radius: 3px;
+      background: #0d1117; color: #aaa; font-size: 10px; font-family: monospace;
+      cursor: pointer;
+    }
+    .admin-user-row .actions button:hover { background: #30363d; color: #fff; }
+    .btn-danger { border-color: #ff4444 !important; color: #ff6b6b !important; }
+  </style>
+</head>
+<body>
+  <div id="auth-screen">
+    <div class="auth-box">
+      <h1>SPACECOLONY</h1>
+      <p class="subtitle">Open-world sci-fi colony sim</p>
+      <input type="text" id="auth-username" placeholder="Username" autocomplete="off" />
+      <input type="password" id="auth-password" placeholder="Password" />
+      <div class="btn-row">
+        <button class="btn-login" id="btn-login">Login</button>
+        <button class="btn-register" id="btn-register">Register</button>
+      </div>
+      <div class="auth-error" id="auth-error"></div>
+    </div>
+  </div>
+
+  <!-- In-game menu bar -->
+  <div id="menu-bar">
+    <span id="menu-username"></span>
+    <button id="btn-admin" style="display:none">Admin</button>
+    <button id="btn-logout">Logout</button>
+  </div>
+
+  <!-- Admin panel -->
+  <div id="admin-panel">
+    <h3>Admin Panel</h3>
+    <div id="admin-users-list"></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

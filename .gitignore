@@ -1,0 +1,8 @@
+node_modules/
+client/dist/
+server/venv/
+server/__pycache__/
+server/spacecolony.db
+server/.jwt_secret
+*.pyc
+.DS_Store
