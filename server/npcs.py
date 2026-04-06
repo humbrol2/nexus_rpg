@@ -17,10 +17,11 @@ class Animal:
     animal_type: str
     x: float
     y: float
-    hp: int
-    max_hp: int
-    spawn_x: float
-    spawn_y: float
+    z: int = 0
+    hp: int = 20
+    max_hp: int = 20
+    spawn_x: float = 0.0
+    spawn_y: float = 0.0
     # AI state
     target_x: float | None = None
     target_y: float | None = None
@@ -33,6 +34,7 @@ class Animal:
             "type": self.animal_type,
             "x": self.x,
             "y": self.y,
+            "z": self.z,
             "hp": self.hp,
             "max_hp": self.max_hp,
         }
@@ -56,9 +58,11 @@ class NPCManager:
                 result.append(a)
         return result
 
-    def spawn_in_chunk(self, cx: int, cy: int, world, chunk_size: int = 64, tile_px: int = 32) -> list[Animal]:
+    def spawn_in_chunk(self, cx: int, cy: int, world, chunk_size: int = 64, tile_px: int = 32, cz: int = 0) -> list[Animal]:
         """Spawn animals in a chunk if not already spawned. Returns new animals."""
-        key = (cx, cy)
+        if cz != 0:
+            return []  # Only spawn animals on surface for now
+        key = (cx, cy, cz)
         if key in self._spawned_chunks:
             return []
         if len(self._animals) >= MAX_ANIMALS:

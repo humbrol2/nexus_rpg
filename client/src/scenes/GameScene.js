@@ -48,6 +48,7 @@ export class GameScene extends Phaser.Scene {
     this.keys = null;
     this.speed = 200;
     this.chunkLoadRadius = 2;
+    this.currentZ = 0;
     this.nameTexts = {};
     this.inventory = {};
     this.isMining = false;
@@ -107,6 +108,8 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.keyboard.on('keydown-G', () => this._withdrawFromMachine()); // G for grab
     this.input.keyboard.on('keydown-Q', () => this.hud.closeMachineUI());
+    this.input.keyboard.on('keydown-H', () => this.hud.toggleHelp());
+    this.input.keyboard.on('keydown-V', () => this._toggleZLevel());
 
     // Backtick to open chat
     this.input.keyboard.on('keydown', (e) => {
@@ -138,6 +141,37 @@ export class GameScene extends Phaser.Scene {
     this.socket = new GameSocket();
     this._setupSocketHandlers();
     this.socket.connect();
+  }
+
+  _toggleZLevel() {
+    // Cycle: 0 → -1 → 0 (more levels added later)
+    const newZ = this.currentZ === 0 ? -1 : 0;
+    // Tell server we want to change Z
+    this.socket.send({ type: 'change_z', direction: newZ < this.currentZ ? -1 : 1 });
+  }
+
+  _handleZChange(newZ) {
+    this.currentZ = newZ;
+    // Clear all rendered chunks and tile data
+    for (const key of Object.keys(this.loadedChunks)) {
+      this.loadedChunks[key].destroy();
+      const parts = key.split(',');
+      const canvasKey = `chunk_${parts[0]}_${parts[1]}_${parts[2] || 0}`;
+      if (this.textures.exists(canvasKey)) this.textures.remove(canvasKey);
+    }
+    this.loadedChunks = {};
+    this.chunkTileData = {};
+    // Clear machine icons
+    for (const key of Object.keys(this.machineIcons)) {
+      this.machineIcons[key].destroy();
+    }
+    this.machineIcons = {};
+    // Reset chunk tracking to force reload
+    this.lastChunkX = null;
+    this.lastChunkY = null;
+    // Update HUD
+    this.hud.setZLevel(this.currentZ);
+    this.hud.showToast(this.currentZ === 0 ? 'Surface' : `Underground ${this.currentZ}`);
   }
 
   _cancelAll() {
@@ -188,7 +222,7 @@ export class GameScene extends Phaser.Scene {
   _getTileAt(wx, wy) {
     const cx = Math.floor(wx / this.chunkSize);
     const cy = Math.floor(wy / this.chunkSize);
-    const data = this.chunkTileData[`${cx},${cy}`];
+    const data = this.chunkTileData[`${cx},${cy},${this.currentZ}`];
     if (!data) return -1;
     const lx = ((wx % this.chunkSize) + this.chunkSize) % this.chunkSize;
     const ly = ((wy % this.chunkSize) + this.chunkSize) % this.chunkSize;
@@ -462,7 +496,7 @@ export class GameScene extends Phaser.Scene {
   _addMachineIcon(machine) {
     const key = `${machine.wx},${machine.wy}`;
     if (this.machineIcons[key]) return;
-    const symbols = { 200: 'M', 201: 'F', 202: 'S', 203: 'Fu' };
+    const symbols = { 200: 'M', 201: 'F', 202: 'S', 203: 'Fu', 204: 'C', 205: 'C', 206: 'C', 207: 'C' };
     const icon = this.add.text(
       machine.wx * TILE_PX + TILE_PX / 2,
       machine.wy * TILE_PX + TILE_PX / 2,
@@ -518,6 +552,7 @@ export class GameScene extends Phaser.Scene {
         if (adminBtn) adminBtn.style.display = 'block';
       }
 
+      this.currentZ = msg.player.z ?? 0;
       this.myPlayer = this.add.sprite(msg.player.x, msg.player.y, 'player_self').setDepth(100);
       this.myNameTag = this.add.text(msg.player.x, msg.player.y - 20, msg.player.name, {
         fontSize: '10px', fontFamily: 'monospace', color: '#00ff88',
@@ -559,13 +594,28 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.socket.on('chunk', (msg) => {
+      const cz = msg.cz ?? 0;
+      // Only render if it's for our current Z level
+      if (cz !== this.currentZ) return;
       this._renderChunk(msg.cx, msg.cy, msg.tiles, msg.size);
-      this.chunkTileData[`${msg.cx},${msg.cy}`] = msg.tiles;
-      // Feed to minimap
-      this.hud.registerChunk(msg.cx, msg.cy, msg.tiles, msg.size);
+      this.chunkTileData[`${msg.cx},${msg.cy},${cz}`] = msg.tiles;
+      // Feed to minimap (only surface)
+      if (cz === 0) this.hud.registerChunk(msg.cx, msg.cy, msg.tiles, msg.size);
     });
 
-    this.socket.on('tile_update', (msg) => this._updateTile(msg.wx, msg.wy, msg.tile));
+    this.socket.on('tile_update', (msg) => {
+      if ((msg.wz ?? 0) !== this.currentZ) return;
+      this._updateTile(msg.wx, msg.wy, msg.tile);
+    });
+
+    this.socket.on('z_changed', (msg) => {
+      this._handleZChange(msg.z);
+    });
+
+    this.socket.on('error', (msg) => {
+      const reasons = { cannot_go_there: "Can't go there" };
+      hud.showToast(reasons[msg.reason] || msg.reason);
+    });
 
     this.socket.on('inventory', (msg) => {
       this.inventory = msg.inventory;
@@ -678,6 +728,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.socket.on('machine_state', (msg) => {
+      if ((msg.machine.wz ?? 0) !== this.currentZ) return;
       this._addMachineIcon(msg.machine);
       if (hud.machineUIOpen && hud.machineUIData &&
           hud.machineUIData.wx === msg.machine.wx && hud.machineUIData.wy === msg.machine.wy) {
@@ -688,6 +739,7 @@ export class GameScene extends Phaser.Scene {
     this.socket.on('machine_ui', (msg) => hud.showMachineUI(msg.machine));
 
     this.socket.on('machine_removed', (msg) => {
+      if ((msg.wz ?? 0) !== this.currentZ) return;
       this._removeMachineIcon(msg.wx, msg.wy);
       if (hud.machineUIOpen && hud.machineUIData &&
           hud.machineUIData.wx === msg.wx && hud.machineUIData.wy === msg.wy) {
@@ -702,6 +754,8 @@ export class GameScene extends Phaser.Scene {
       const seen = new Set();
       for (const p of msg.players) {
         if (p.id === this.myId) continue;
+        // Only show players on same Z level
+        if ((p.z ?? 0) !== this.currentZ) continue;
         seen.add(p.id);
         if (!this.otherPlayers[p.id]) {
           this.otherPlayers[p.id] = this.add.sprite(p.x, p.y, 'player_other').setDepth(99);
@@ -709,7 +763,6 @@ export class GameScene extends Phaser.Scene {
             fontSize: '10px', fontFamily: 'monospace', color: '#88bbff',
           }).setOrigin(0.5).setDepth(101);
         }
-        // Set target — interpolation happens in update()
         this._otherTargets[p.id] = { tx: p.x, ty: p.y };
       }
       for (const id of Object.keys(this.otherPlayers)) {
@@ -720,9 +773,10 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // NPC animals
+      // NPC animals — only show on same Z level
       const npcSeen = new Set();
       for (const npc of (msg.npcs || [])) {
+        if ((npc.z ?? 0) !== this.currentZ) continue;
         npcSeen.add(npc.id);
         if (!this.npcSprites[npc.id]) {
           const texKey = `npc_${npc.type}`;
@@ -748,7 +802,7 @@ export class GameScene extends Phaser.Scene {
   // ── Rendering ──
 
   _renderChunk(cx, cy, tiles, size) {
-    const key = `${cx},${cy}`;
+    const key = `${cx},${cy},${this.currentZ}`;
     if (this.loadedChunks[key]) this.loadedChunks[key].destroy();
 
     const offsetX = cx * size * TILE_PX;
@@ -757,7 +811,7 @@ export class GameScene extends Phaser.Scene {
     const pixH = size * TILE_PX;
 
     // Draw chunk to a canvas, then create a texture + sprite
-    const canvasKey = `chunk_${cx}_${cy}`;
+    const canvasKey = `chunk_${cx}_${cy}_${this.currentZ}`;
     if (this.textures.exists(canvasKey)) this.textures.remove(canvasKey);
 
     const canvasTex = this.textures.createCanvas(canvasKey, pixW, pixH);
@@ -785,7 +839,7 @@ export class GameScene extends Phaser.Scene {
   _updateTile(wx, wy, tileId) {
     const cx = Math.floor(wx / this.chunkSize);
     const cy = Math.floor(wy / this.chunkSize);
-    const key = `${cx},${cy}`;
+    const key = `${cx},${cy},${this.currentZ}`;
     const data = this.chunkTileData[key];
     if (data) {
       const lx = ((wx % this.chunkSize) + this.chunkSize) % this.chunkSize;
@@ -807,11 +861,11 @@ export class GameScene extends Phaser.Scene {
     const pcy = Math.floor(this.myPlayer.y / (this.chunkSize * TILE_PX));
     const max = this.chunkLoadRadius + 2;
     for (const key of Object.keys(this.loadedChunks)) {
-      const [cx, cy] = key.split(',').map(Number);
-      if (Math.abs(cx - pcx) > max || Math.abs(cy - pcy) > max) {
+      const [cx, cy, cz] = key.split(',').map(Number);
+      // Unload chunks from different Z level or too far away
+      if ((cz || 0) !== this.currentZ || Math.abs(cx - pcx) > max || Math.abs(cy - pcy) > max) {
         this.loadedChunks[key].destroy();
-        // Clean up the canvas texture too
-        const canvasKey = `chunk_${cx}_${cy}`;
+        const canvasKey = `chunk_${cx}_${cy}_${cz || 0}`;
         if (this.textures.exists(canvasKey)) this.textures.remove(canvasKey);
         delete this.loadedChunks[key];
         delete this.chunkTileData[key];
@@ -972,8 +1026,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    const zLabel = this.currentZ === 0 ? '' : ` | Z:${this.currentZ}`;
     this.hud.updateCoords(
-      `${tx}, ${ty} | ${zoneName} | Players: ${Object.keys(this.otherPlayers).length + 1}`
+      `${tx}, ${ty}${zLabel} | ${zoneName} | Players: ${Object.keys(this.otherPlayers).length + 1}`
     );
     this.hud.updateZone(zoneName, zoneColor);
 
@@ -989,8 +1044,7 @@ export class GameScene extends Phaser.Scene {
       else if (action === 'toggleCrafting') this.hud.toggleCrafting();
       else if (action === 'toggleResearch') this.hud.toggleResearch();
       else if (action === 'toggleWorldMap') this.hud.toggleWorldMap();
-      else if (action === 'toggleCharacter') this.hud.showToast('Character sheet coming soon');
-      else if (action === 'toggleSettings') this.hud.showToast('Settings coming soon');
+      else if (action === 'toggleHelp') this.hud.toggleHelp();
     }
 
     // Chat fade

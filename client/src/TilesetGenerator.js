@@ -87,8 +87,8 @@ function paintSand(ctx, x, y, rng) {
   }
 }
 
-function paintDirt(ctx, x, y, rng) {
-  const base = { r: 90, g: 65, b: 38 };
+function paintDirt(ctx, x, y, rng, baseR = 90, baseG = 65, baseB = 38) {
+  const base = { r: baseR, g: baseG, b: baseB };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
       ctx.fillStyle = rgbStr(
@@ -155,8 +155,8 @@ function paintRock(ctx, x, y, rng) {
   ctx.fillRect(x + T - 2, y, 2, T);
 }
 
-function paintDenseRock(ctx, x, y, rng) {
-  const base = { r: 58, g: 56, b: 54 };
+function paintDenseRock(ctx, x, y, rng, baseR = 58, baseG = 56, baseB = 54) {
+  const base = { r: baseR, g: baseG, b: baseB };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
       ctx.fillStyle = rgbStr(
@@ -275,7 +275,8 @@ function paintAlienTree(ctx, x, y, rng) {
   ctx.fillRect(x + canopyCX - 3, y + canopyCY - canopyR, 6, 3);
 }
 
-function paintCrystal(ctx, x, y, rng) {
+function paintCrystal(ctx, x, y, rng, crystalColor = null) {
+  const cc = crystalColor ? hexToRgb(crystalColor) : null;
   // Dark ground base
   const base = { r: 35, g: 40, b: 50 };
   for (let py = 0; py < T; py++) {
@@ -292,7 +293,9 @@ function paintCrystal(ctx, x, y, rng) {
     const w = (rng() * 2 + 2) | 0;
     // Crystal body
     const bright = 160 + rng() * 80;
-    ctx.fillStyle = rgbStr(bright * 0.5, bright * 0.8, bright);
+    ctx.fillStyle = cc
+      ? rgbStr(cc.r * (bright/255), cc.g * (bright/255), cc.b * (bright/255))
+      : rgbStr(bright * 0.5, bright * 0.8, bright);
     ctx.fillRect(x + cx, y + cy - h, w, h);
     // Tip
     ctx.fillStyle = rgbStr(200, 230, 255);
@@ -488,7 +491,7 @@ export function generateTileset(scene) {
 
   // Add extra machine tiles by extending canvas
   const canvas2 = document.createElement('canvas');
-  canvas2.width = T * (tileCount + 6); // +storage, furnace, 4 chests
+  canvas2.width = T * (tileCount + 11); // +storage, furnace, 4 chests, 5 underground
   canvas2.height = T;
   const ctx2 = canvas2.getContext('2d');
   ctx2.drawImage(canvas, 0, 0);
@@ -502,6 +505,12 @@ export function generateTileset(scene) {
   paintChest(ctx2, 20 * T, 0, mulberry32(1810), 95, 95, 90);    // stone
   paintChest(ctx2, 21 * T, 0, mulberry32(1820), 184, 115, 51);  // copper
   paintChest(ctx2, 22 * T, 0, mulberry32(1830), 130, 140, 155); // iron
+  // Underground tiles (index 23-27 -> 12-16)
+  paintDirt(ctx2, 23 * T, 0, mulberry32(2000), 50, 40, 30);     // cave_floor (darker dirt)
+  paintDenseRock(ctx2, 24 * T, 0, mulberry32(2100), 35, 30, 25); // cave_wall
+  paintOre(ctx2, 25 * T, 0, mulberry32(2200), 0xa06437);        // deep_iron
+  paintOre(ctx2, 26 * T, 0, mulberry32(2300), 0xbe7d37);        // deep_copper
+  paintCrystal(ctx2, 27 * T, 0, mulberry32(2400), 0xa0dcff);    // rare_crystal
 
   // Register as Phaser texture
   if (scene.textures.exists('tileset')) {
@@ -516,6 +525,7 @@ export function generateTileset(scene) {
 const TILE_INDEX_MAP = {
   0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
   7: 7, 8: 8, 9: 9, 10: 10, 11: 11,
+  12: 23, 13: 24, 14: 25, 15: 26, 16: 27, // underground tiles
   100: 12, 101: 13, 102: 14,
   200: 15, 201: 16, 202: 17, 203: 18,
   204: 19, 205: 20, 206: 21, 207: 22,

@@ -25,7 +25,7 @@ from item_registry import (
 from player import PlayerManager, Player
 from machines import (
     MachineManager, Machine, MACHINE_COSTS, MACHINE_MINER, MACHINE_FABRICATOR,
-    MACHINE_STORAGE, MACHINE_FURNACE, RECIPES, MACHINE_NAMES,
+    MACHINE_STORAGE, MACHINE_FURNACE, RECIPES, MACHINE_NAMES, CHEST_TYPES,
 )
 import database as db
 from research import PlayerResearch, RESEARCH_TREE, get_tree_for_client
@@ -36,6 +36,63 @@ UPS = 10
 TICK_INTERVAL = 1.0 / UPS
 CHUNK_LOAD_RADIUS = 2
 SAVE_INTERVAL = 30  # auto-save every 30 seconds
+
+# ── Message validation schemas ──
+# Maps msg_type -> required keys (type is always required)
+MSG_SCHEMAS: dict[str, list[str]] = {
+    "move": ["x", "y"],
+    "mine_start": ["wx", "wy"],
+    "mine_complete": [],
+    "mine_cancel": [],
+    "build": ["item", "wx", "wy"],
+    "remove_building": ["wx", "wy"],
+    "place_machine": ["machine_type", "wx", "wy"],
+    "interact_machine": ["wx", "wy"],
+    "machine_set_recipe": ["wx", "wy", "recipe"],
+    "machine_deposit": ["wx", "wy", "item"],
+    "machine_withdraw": ["wx", "wy"],
+    "chest_withdraw_item": ["wx", "wy", "item"],
+    "remove_machine": ["wx", "wy"],
+    "request_chunk": ["cx", "cy"],
+    "research_start": ["id"],
+    "research_cancel": [],
+    "hand_craft": [],
+    "place_claim": [],
+    "rename_claim": [],
+    "set_sign_text": ["wx", "wy"],
+    "get_sign": ["wx", "wy"],
+    "chat": [],
+    "change_z": ["direction"],
+}
+
+# ── Rate limiting ──
+RATE_LIMITS: dict[str, tuple[int, float]] = {
+    # msg_type: (max_count, per_seconds)
+    "chat": (5, 5.0),
+    "mine_start": (10, 2.0),
+    "hand_craft": (20, 5.0),
+    "build": (15, 5.0),
+    "place_machine": (10, 5.0),
+}
+# Per-connection rate tracking: ws_id -> {msg_type: [timestamps]}
+_rate_buckets: dict[str, dict[str, list[float]]] = {}
+
+
+def check_rate_limit(ws_id: str, msg_type: str) -> bool:
+    """Returns True if the message should be allowed, False if rate-limited."""
+    if msg_type not in RATE_LIMITS:
+        return True
+    max_count, window = RATE_LIMITS[msg_type]
+    buckets = _rate_buckets.setdefault(ws_id, {})
+    timestamps = buckets.setdefault(msg_type, [])
+    now = time.time()
+    # Prune old timestamps
+    cutoff = now - window
+    timestamps[:] = [t for t in timestamps if t > cutoff]
+    if len(timestamps) >= max_count:
+        return False
+    timestamps.append(now)
+    return True
 
 # JWT secret — generated once per server run. For production, use env var.
 # Persist JWT secret so tokens survive server restarts
@@ -89,12 +146,11 @@ def load_world_state():
     # Any DIRT modification where the original procedural tile was a respawnable resource
     import time as _time
     respawn_count = 0
-    for (wx, wy), tile_id in list(world._modifications.items()):
-        if tile_id == DIRT:
+    for (wx, wy, wz), tile_id in list(world._modifications.items()):
+        if tile_id == DIRT and wz == 0:
             original = world._get_tile(wx, wy)
             if original in RESPAWN_TIMES and RESPAWN_TIMES[original] > 0:
-                # Queue respawn — assume it was mined recently (conservative: full respawn time)
-                world._respawn_queue[(wx, wy)] = (original, _time.time() + RESPAWN_TIMES[original])
+                world._respawn_queue[(wx, wy, wz)] = (original, _time.time() + RESPAWN_TIMES[original])
                 respawn_count += 1
     print(f"[INIT] Queued {respawn_count} tile respawns")
 
@@ -109,14 +165,16 @@ def load_world_state():
         m = Machine(
             machine_id=md["machine_id"],
             machine_type=md["machine_type"],
-            wx=md["wx"], wy=md["wy"],
+            wx=md["wx"], wy=md["wy"], wz=md.get("wz", 0),
             owner_id=str(md["owner_id"]),
             inventory=md["inventory"],
             output=md["output"],
             recipe=md["recipe"],
         )
         machine_mgr._machines[m.machine_id] = m
-        machine_mgr._by_pos[(m.wx, m.wy)] = m.machine_id
+        machine_mgr._by_pos[(m.wx, m.wy, m.wz)] = m.machine_id
+        ck = machine_mgr._chunk_key(m.wx, m.wy, m.wz)
+        machine_mgr._by_chunk.setdefault(ck, set()).add(m.machine_id)
         # Update next_id counter
         try:
             num = int(m.machine_id.split("_")[1])
@@ -130,8 +188,8 @@ def load_world_state():
 def save_world_state():
     """Persist all world modifications and machines."""
     # Save tile modifications
-    for (wx, wy), tile_id in world._modifications.items():
-        db.save_world_mod(wx, wy, tile_id)
+    for (wx, wy, wz), tile_id in world._modifications.items():
+        db.save_world_mod(wx, wy, tile_id, wz)
 
     # Save machines
     db.save_all_machines(machine_mgr.get_all())
@@ -141,7 +199,7 @@ def save_player(ws_id: str, player: Player):
     """Save a single player's state."""
     user_id = ws_to_user.get(ws_id)
     if user_id:
-        db.save_player_state(user_id, player.x, player.y, player.inventory)
+        db.save_player_state(user_id, player.x, player.y, player.inventory, player.z)
 
 
 async def send_json(ws: WebSocket, data: dict) -> None:
@@ -161,22 +219,23 @@ async def broadcast_json(data: dict) -> None:
 
 
 async def send_chunks_around(ws: WebSocket, player: Player) -> None:
-    cx, cy = player.chunk_x, player.chunk_y
+    cx, cy, cz = player.chunk_x, player.chunk_y, player.chunk_z
+    messages: list[dict] = []
     for dx in range(-CHUNK_LOAD_RADIUS, CHUNK_LOAD_RADIUS + 1):
         for dy in range(-CHUNK_LOAD_RADIUS, CHUNK_LOAD_RADIUS + 1):
-            chunk = world.get_chunk(cx + dx, cy + dy)
-            await send_json(ws, {
+            chunk = world.get_chunk(cx + dx, cy + dy, cz)
+            messages.append({
                 "type": "chunk",
-                "cx": chunk.cx, "cy": chunk.cy,
+                "cx": chunk.cx, "cy": chunk.cy, "cz": chunk.cz,
                 "tiles": chunk.to_flat(), "size": CHUNK_SIZE,
             })
-            for m in machine_mgr.get_in_chunk(cx + dx, cy + dy):
-                await send_json(ws, {"type": "machine_state", "machine": m.to_dict()})
-            # Send signs in this chunk
-            for sign in db.get_signs_in_chunk(cx + dx, cy + dy):
-                await send_json(ws, {"type": "sign_data", "sign": sign})
-            # Spawn NPCs in this chunk if not yet spawned
-            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world)
+            for m in machine_mgr.get_in_chunk(cx + dx, cy + dy, cz):
+                messages.append({"type": "machine_state", "machine": m.to_dict()})
+            for sign in db.get_signs_in_chunk(cx + dx, cy + dy, cz=cz):
+                messages.append({"type": "sign_data", "sign": sign})
+    # Send as single batch to reduce round-trips
+    await send_json(ws, {"type": "batch", "messages": messages})
+            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
 
 
 @asynccontextmanager
@@ -386,6 +445,7 @@ async def websocket_endpoint(ws: WebSocket):
     player = players.add_player(ws_id, name=username)
     player.x = state["x"]
     player.y = state["y"]
+    player.z = state.get("z", 0)
     player.inventory = state["inventory"]
 
     ws_to_user[ws_id] = user_id
@@ -423,19 +483,43 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         while True:
             raw = await ws.receive_text()
-            msg = json.loads(raw)
-            msg_type = msg["type"]
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            msg_type = msg.get("type")
+            if not msg_type or msg_type not in MSG_SCHEMAS:
+                continue
+
+            # Validate required keys
+            required = MSG_SCHEMAS[msg_type]
+            if any(k not in msg for k in required):
+                await send_json(ws, {"type": "error", "reason": "invalid_message"})
+                continue
+
+            # Rate limit check
+            if not check_rate_limit(ws_id, msg_type):
+                await send_json(ws, {"type": "error", "reason": "rate_limited"})
+                continue
 
             if msg_type == "move":
                 new_x = msg["x"]
                 new_y = msg["y"]
+                # Validate numeric types
+                if not isinstance(new_x, (int, float)) or not isinstance(new_y, (int, float)):
+                    continue
 
                 half = 10
                 blocked = False
-                for cx_off, cy_off in [(-half, -half), (half, -half), (-half, half), (half, half)]:
+                # Check corners + edge midpoints to prevent diagonal clipping
+                check_points = [
+                    (-half, -half), (half, -half), (-half, half), (half, half),
+                    (0, -half), (0, half), (-half, 0), (half, 0),
+                ]
+                for cx_off, cy_off in check_points:
                     check_x = int((new_x + cx_off) // TILE_PX)
                     check_y = int((new_y + cy_off) // TILE_PX)
-                    tile = world.get_tile(check_x, check_y)
+                    tile = world.get_tile(check_x, check_y, player.z)
                     if tile in SOLID_TILES or tile == WALL or tile >= 200:
                         blocked = True
                         break
@@ -453,6 +537,7 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "mine_start":
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
 
                 # Range check
                 player_tx = int(player.x // TILE_PX)
@@ -467,7 +552,7 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json(ws, {"type": "mine_fail", "reason": zone_err})
                     continue
 
-                tile = world.get_tile(wx, wy)
+                tile = world.get_tile(wx, wy, wz)
 
                 minfo = MINABLE.get(tile)
                 if minfo:
@@ -475,11 +560,11 @@ async def websocket_endpoint(ws: WebSocket):
                     drop_per_mine = minfo["drop"]
                     duration = minfo["time"]
                     max_hp = minfo["hp"]
-                    current_hp = world.get_ore_hp(wx, wy)
+                    current_hp = world.get_ore_hp(wx, wy, wz)
                     if current_hp is None:
                         current_hp = max_hp
                     mining_sessions[ws_id] = {
-                        "wx": wx, "wy": wy,
+                        "wx": wx, "wy": wy, "wz": wz,
                         "start": time.time(),
                         "duration": duration,
                         "item": item_name,
@@ -502,20 +587,22 @@ async def websocket_endpoint(ws: WebSocket):
                     elapsed = time.time() - session["start"]
                     if elapsed >= session["duration"] * 0.9:
                         wx_s, wy_s = session["wx"], session["wy"]
+                        wz_s = session.get("wz", 0)
                         tile_s = session["tile"]
 
                         # Damage ore HP
-                        depleted, remaining_hp = world.damage_ore(wx_s, wy_s, tile_s)
+                        depleted, remaining_hp = world.damage_ore(wx_s, wy_s, tile_s, wz_s)
 
                         player.add_item(session["item"], session["count"])
 
                         if depleted:
-                            # Tile becomes dirt
-                            world.set_tile(wx_s, wy_s, DIRT)
-                            db.save_world_mod(wx_s, wy_s, DIRT)
+                            from world import CAVE_FLOOR
+                            empty_tile = CAVE_FLOOR if wz_s != 0 else DIRT
+                            world.set_tile(wx_s, wy_s, empty_tile, wz_s)
+                            db.save_world_mod(wx_s, wy_s, empty_tile, wz_s)
                             await broadcast_json({
                                 "type": "tile_update",
-                                "wx": wx_s, "wy": wy_s, "tile": DIRT,
+                                "wx": wx_s, "wy": wy_s, "wz": wz_s, "tile": empty_tile,
                             })
                         else:
                             # Send HP update to all nearby players
@@ -526,7 +613,6 @@ async def websocket_endpoint(ws: WebSocket):
                                 "hp": remaining_hp, "max_hp": max_hp,
                             })
 
-                        save_player(ws_id, player)
                         await send_json(ws, {
                             "type": "inventory",
                             "inventory": player.inventory_dict(),
@@ -542,8 +628,8 @@ async def websocket_endpoint(ws: WebSocket):
             elif msg_type == "build":
                 item_name = msg["item"]
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
 
-                # Zone protection
                 zone_err = check_zone_permission(wx, wy, user_id, is_admin)
                 if zone_err:
                     await send_json(ws, {"type": "build_fail", "reason": zone_err})
@@ -553,11 +639,10 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json(ws, {"type": "build_fail", "reason": "unknown_item"})
                     continue
 
-                # Research is enforced at craft time — if player has the crafted item, they researched it
                 binfo = BUILDABLE[item_name]
                 tile_id = binfo["tile_id"]
                 cost = binfo["cost"]
-                current_tile = world.get_tile(wx, wy)
+                current_tile = world.get_tile(wx, wy, wz)
 
                 if not player.has_items(cost):
                     await send_json(ws, {"type": "build_fail", "reason": "no_resources"})
@@ -566,21 +651,21 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json(ws, {"type": "build_fail", "reason": "blocked"})
                     continue
 
-                # Remember what was under it for restoration on removal
-                original_tile = world.get_tile(wx, wy)
+                original_tile = world.get_tile(wx, wy, wz)
                 player.remove_items(cost)
-                world.set_tile(wx, wy, tile_id)
-                db.save_world_mod(wx, wy, tile_id)
-                building_owners[(wx, wy)] = {"user_id": user_id, "original_tile": original_tile}
-                db.save_building_owner(wx, wy, user_id, original_tile)
-                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": tile_id})
+                world.set_tile(wx, wy, tile_id, wz)
+                db.save_world_mod(wx, wy, tile_id, wz)
+                building_owners[(wx, wy, wz)] = {"user_id": user_id, "original_tile": original_tile}
+                db.save_building_owner(wx, wy, user_id, original_tile, wz)
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": tile_id})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": item_name, "wx": wx, "wy": wy})
 
             elif msg_type == "remove_building":
                 wx, wy = msg["wx"], msg["wy"]
-                tile = world.get_tile(wx, wy)
-                bdata = building_owners.get((wx, wy))
+                wz = player.z
+                tile = world.get_tile(wx, wy, wz)
+                bdata = building_owners.get((wx, wy, wz))
 
                 removable = {WALL, FLOOR, SIGN}
                 if tile not in removable:
@@ -597,17 +682,15 @@ async def websocket_endpoint(ws: WebSocket):
                     player.add_item(refund_item, 1)
 
                 if tile == SIGN:
-                    db.delete_sign(wx, wy)
-                    await broadcast_json({"type": "sign_removed", "wx": wx, "wy": wy})
+                    db.delete_sign(wx, wy, wz)
+                    await broadcast_json({"type": "sign_removed", "wx": wx, "wy": wy, "wz": wz})
 
-                # Restore original tile (sand, grass, etc.) instead of always dirt
                 restore_tile = bdata.get("original_tile", DIRT)
-                # Remove the modification to let original terrain show through
-                world._modifications.pop((wx, wy), None)
-                db.delete_world_mod(wx, wy)
-                building_owners.pop((wx, wy), None)
-                db.delete_building_owner(wx, wy)
-                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": restore_tile})
+                world._modifications.pop((wx, wy, wz), None)
+                db.delete_world_mod(wx, wy, wz)
+                building_owners.pop((wx, wy, wz), None)
+                db.delete_building_owner(wx, wy, wz)
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": restore_tile})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": "removed", "wx": wx, "wy": wy})
 
@@ -615,6 +698,7 @@ async def websocket_endpoint(ws: WebSocket):
               try:
                 machine_type = msg["machine_type"]
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
 
                 zone_err = check_zone_permission(wx, wy, user_id, is_admin)
                 if zone_err:
@@ -626,7 +710,7 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
 
                 cost = MACHINE_COSTS[machine_type]
-                current_tile = world.get_tile(wx, wy)
+                current_tile = world.get_tile(wx, wy, wz)
 
                 if not player.has_items(cost):
                     await send_json(ws, {"type": "build_fail", "reason": "no_resources"})
@@ -634,20 +718,20 @@ async def websocket_endpoint(ws: WebSocket):
                 if current_tile in SOLID_TILES or current_tile == WALL or current_tile >= 200:
                     await send_json(ws, {"type": "build_fail", "reason": "blocked"})
                     continue
-                if machine_mgr.get_at(wx, wy):
+                if machine_mgr.get_at(wx, wy, wz):
                     await send_json(ws, {"type": "build_fail", "reason": "occupied"})
                     continue
 
-                original_tile = world.get_tile(wx, wy)
+                original_tile = world.get_tile(wx, wy, wz)
                 player.remove_items(cost)
-                machine = machine_mgr.place(machine_type, wx, wy, str(user_id))
-                world.set_tile(wx, wy, machine_type)
-                db.save_world_mod(wx, wy, machine_type)
-                building_owners[(wx, wy)] = {"user_id": user_id, "original_tile": original_tile}
-                db.save_building_owner(wx, wy, user_id, original_tile)
+                machine = machine_mgr.place(machine_type, wx, wy, str(user_id), wz)
+                world.set_tile(wx, wy, machine_type, wz)
+                db.save_world_mod(wx, wy, machine_type, wz)
+                building_owners[(wx, wy, wz)] = {"user_id": user_id, "original_tile": original_tile}
+                db.save_building_owner(wx, wy, user_id, original_tile, wz)
                 db.save_machine(machine)
 
-                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": machine_type})
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": machine_type})
                 await broadcast_json({"type": "machine_state", "machine": machine.to_dict()})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": MACHINE_NAMES[machine_type], "wx": wx, "wy": wy})
@@ -659,14 +743,16 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "interact_machine":
                 wx, wy = msg["wx"], msg["wy"]
-                machine = machine_mgr.get_at(wx, wy)
+                wz = player.z
+                machine = machine_mgr.get_at(wx, wy, wz)
                 if machine:
                     await send_json(ws, {"type": "machine_ui", "machine": machine.to_dict()})
 
             elif msg_type == "machine_set_recipe":
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
                 recipe = msg["recipe"]
-                machine = machine_mgr.get_at(wx, wy)
+                machine = machine_mgr.get_at(wx, wy, wz)
                 if machine and recipe in RECIPES:
                     _, _, required_type = RECIPES[recipe]
                     if machine.machine_type == required_type:
@@ -676,9 +762,10 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "machine_deposit":
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
                 item = msg["item"]
                 count = msg.get("count", 1)
-                machine = machine_mgr.get_at(wx, wy)
+                machine = machine_mgr.get_at(wx, wy, wz)
                 if machine and player.inventory.get(item, 0) >= count:
                     added = machine.add_input(item, count)
                     if added > 0:
@@ -688,53 +775,69 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "machine_withdraw":
                 wx, wy = msg["wx"], msg["wy"]
-                machine = machine_mgr.get_at(wx, wy)
+                wz = player.z
+                machine = machine_mgr.get_at(wx, wy, wz)
                 if machine:
-                    items = machine.take_all_output()
+                    if machine.machine_type in CHEST_TYPES:
+                        items = machine.take_all_inventory()
+                    else:
+                        items = machine.take_all_output()
                     for item, count in items.items():
                         player.add_item(item, count)
                     if items:
                         await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                         await send_json(ws, {"type": "machine_ui", "machine": machine.to_dict()})
 
+            elif msg_type == "chest_withdraw_item":
+                wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
+                item = msg["item"]
+                count = msg.get("count", 1)
+                machine = machine_mgr.get_at(wx, wy, wz)
+                if machine and machine.machine_type in CHEST_TYPES:
+                    taken = machine.take_from_inventory(item, count)
+                    if taken > 0:
+                        player.add_item(item, taken)
+                        await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                        await send_json(ws, {"type": "machine_ui", "machine": machine.to_dict()})
+
             elif msg_type == "remove_machine":
                 wx, wy = msg["wx"], msg["wy"]
-                machine = machine_mgr.get_at(wx, wy)
+                wz = player.z
+                machine = machine_mgr.get_at(wx, wy, wz)
                 if machine and machine.owner_id == str(user_id):
-                    # Return contents to player
                     for item, count in machine.inventory.items():
                         player.add_item(item, count)
                     for item, count in machine.output.items():
                         player.add_item(item, count)
-                    # Return machine item to inventory (for chests)
                     MACHINE_TO_ITEM = {204: "wood_chest", 205: "stone_chest", 206: "copper_chest", 207: "iron_chest"}
                     refund = MACHINE_TO_ITEM.get(machine.machine_type)
                     if refund:
                         player.add_item(refund, 1)
 
-                    machine_mgr.remove(wx, wy)
+                    machine_mgr.remove(wx, wy, wz)
 
-                    # Restore original tile
-                    bdata = building_owners.get((wx, wy))
+                    bdata = building_owners.get((wx, wy, wz))
                     restore_tile = bdata["original_tile"] if bdata else DIRT
-                    world._modifications.pop((wx, wy), None)
-                    db.delete_world_mod(wx, wy)
-                    building_owners.pop((wx, wy), None)
-                    db.delete_building_owner(wx, wy)
-                    db.delete_machine(wx, wy)
+                    world._modifications.pop((wx, wy, wz), None)
+                    db.delete_world_mod(wx, wy, wz)
+                    building_owners.pop((wx, wy, wz), None)
+                    db.delete_building_owner(wx, wy, wz)
+                    db.delete_machine(wx, wy, wz)
 
-                    await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "tile": restore_tile})
-                    await broadcast_json({"type": "machine_removed", "wx": wx, "wy": wy})
+                    await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": restore_tile})
+                    await broadcast_json({"type": "machine_removed", "wx": wx, "wy": wy, "wz": wz})
                     await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
 
             elif msg_type == "request_chunk":
-                chunk = world.get_chunk(msg["cx"], msg["cy"])
+                cz = msg.get("cz", player.z)
+                chunk = world.get_chunk(msg["cx"], msg["cy"], cz)
                 await send_json(ws, {
                     "type": "chunk",
-                    "cx": chunk.cx, "cy": chunk.cy,
+                    "cx": chunk.cx, "cy": chunk.cy, "cz": chunk.cz,
                     "tiles": chunk.to_flat(), "size": CHUNK_SIZE,
                 })
-                for m in machine_mgr.get_in_chunk(msg["cx"], msg["cy"]):
+                for m in machine_mgr.get_in_chunk(msg["cx"], msg["cy"], cz):
                     await send_json(ws, {"type": "machine_state", "machine": m.to_dict()})
 
             elif msg_type == "research_start":
@@ -791,9 +894,6 @@ async def websocket_endpoint(ws: WebSocket):
                 produced = recipe["qty"] * qty
                 player.add_item(recipe_id, produced)
 
-                # Immediate save
-                save_player(ws_id, player)
-
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {
                     "type": "craft_success",
@@ -848,23 +948,44 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "set_sign_text":
                 wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
                 text = msg.get("text", "").strip()[:150]
                 text = re.sub(r'[<>&]', '', text)
-                text = re.sub(r'[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]', '', text)  # preserve newlines
-                tile = world.get_tile(wx, wy)
-                bdata = building_owners.get((wx, wy))
+                text = re.sub(r'[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]', '', text)
+                tile = world.get_tile(wx, wy, wz)
+                bdata = building_owners.get((wx, wy, wz))
                 if tile == SIGN and bdata and bdata["user_id"] == user_id and text:
-                    db.save_sign(wx, wy, text, user_id)
+                    db.save_sign(wx, wy, text, user_id, wz)
                     await broadcast_json({
                         "type": "sign_data",
-                        "sign": {"wx": wx, "wy": wy, "text": text, "owner_id": user_id},
+                        "sign": {"wx": wx, "wy": wy, "wz": wz, "text": text, "owner_id": user_id},
                     })
 
             elif msg_type == "get_sign":
                 wx, wy = msg["wx"], msg["wy"]
-                sign = db.get_sign(wx, wy)
+                wz = player.z
+                sign = db.get_sign(wx, wy, wz)
                 if sign:
                     await send_json(ws, {"type": "sign_data", "sign": sign})
+
+            elif msg_type == "change_z":
+                direction = msg["direction"]
+                if direction not in (-1, 1):
+                    continue
+                new_z = player.z + direction
+                # For now, allow Z=0 (surface) and Z=-1 (underground)
+                if new_z < -1 or new_z > 0:
+                    await send_json(ws, {"type": "error", "reason": "cannot_go_there"})
+                    continue
+                # Don't allow Z change if destination tile is solid (e.g. surfacing into water)
+                ptx = int(player.x // 32)
+                pty = int(player.y // 32)
+                if world.is_solid(ptx, pty, new_z):
+                    await send_json(ws, {"type": "error", "reason": "cannot_go_there"})
+                    continue
+                player.z = new_z
+                await send_json(ws, {"type": "z_changed", "z": player.z})
+                await send_chunks_around(ws, player)
 
             elif msg_type == "chat":
                 text = msg.get("text", "").strip()[:200]
@@ -888,6 +1009,7 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         connections.pop(ws_id, None)
         mining_sessions.pop(ws_id, None)
+        _rate_buckets.pop(ws_id, None)
         # Save player state + research on disconnect
         save_player(ws_id, player)
         pr = player_research.pop(ws_id, None)
@@ -907,53 +1029,83 @@ async def game_loop():
         start = time.time()
         dt = TICK_INTERVAL
 
-        events = machine_mgr.tick(dt, world)
+        try:
+            events = machine_mgr.tick(dt, world)
+        except Exception as e:
+            print(f"[ERROR] machine_mgr.tick failed: {e}")
 
-        # Tick NPC AI
-        npc_mgr.tick(dt, world)
+        try:
+            npc_mgr.tick(dt, world)
+        except Exception as e:
+            print(f"[ERROR] npc_mgr.tick failed: {e}")
 
         # Tick research for all online players (every tick = 0.1s)
-        for ws_id, pr in list(player_research.items()):
-            completed = pr.tick(dt)
-            if completed:
-                ws = connections.get(ws_id)
-                if ws:
-                    await send_json(ws, {
-                        "type": "research_complete",
-                        "id": completed,
-                        "research": pr.to_dict(),
-                    })
-                # Save research progress
-                uid = ws_to_user.get(ws_id)
-                if uid:
-                    db.save_research(uid, pr.to_dict())
+        try:
+            for ws_id, pr in list(player_research.items()):
+                completed = pr.tick(dt)
+                if completed:
+                    ws = connections.get(ws_id)
+                    if ws:
+                        await send_json(ws, {
+                            "type": "research_complete",
+                            "id": completed,
+                            "research": pr.to_dict(),
+                        })
+                    uid = ws_to_user.get(ws_id)
+                    if uid:
+                        db.save_research(uid, pr.to_dict())
+        except Exception as e:
+            print(f"[ERROR] research tick failed: {e}")
 
         # Check ore respawns every 5 seconds (not every tick)
         respawn_check_counter += 1
         if respawn_check_counter >= UPS * 5:
             respawn_check_counter = 0
-            respawned = world.tick_respawns()
-            for wx, wy, tile_id in respawned:
-                # Delete the DB modification so it doesn't reload as dirt
-                db.delete_world_mod(wx, wy)
-                await broadcast_json({
-                    "type": "tile_update",
-                    "wx": wx, "wy": wy, "tile": tile_id,
-                })
+            try:
+                respawned = world.tick_respawns()
+                for wx, wy, wz, tile_id in respawned:
+                    db.delete_world_mod(wx, wy, wz)
+                    await broadcast_json({
+                        "type": "tile_update",
+                        "wx": wx, "wy": wy, "wz": wz, "tile": tile_id,
+                    })
+            except Exception as e:
+                print(f"[ERROR] respawn tick failed: {e}")
 
+        # Spatial culling: each player only gets nearby entities
         if connections:
             all_players = players.get_all()
             all_npcs = npc_mgr.get_all()
-            state = {
-                "type": "state",
-                "players": [p.to_dict() for p in all_players],
-                "npcs": [a.to_dict() for a in all_npcs],
-                "t": time.time(),
-            }
-            msg = json.dumps(state)
-            for ws in list(connections.values()):
+            chunk_div = CHUNK_SIZE * TILE_PX
+            radius = CHUNK_LOAD_RADIUS + 1
+
+            # Pre-compute: player dicts + chunk coords (once, reused per recipient)
+            player_cache = [(p.chunk_x, p.chunk_y, p.to_dict()) for p in all_players]
+            # Pre-compute: NPC dicts + chunk coords
+            npc_cache = [(int(n.x // chunk_div), int(n.y // chunk_div), n.to_dict()) for n in all_npcs]
+
+            now = time.time()
+            for ws_id, ws in list(connections.items()):
                 try:
-                    await ws.send_text(msg)
+                    player = players.get_player(ws_id)
+                    if not player:
+                        continue
+                    pcx, pcy = player.chunk_x, player.chunk_y
+                    nearby_players = [
+                        d for cx, cy, d in player_cache
+                        if abs(cx - pcx) <= radius and abs(cy - pcy) <= radius
+                    ]
+                    nearby_npcs = [
+                        d for cx, cy, d in npc_cache
+                        if abs(cx - pcx) <= radius and abs(cy - pcy) <= radius
+                    ]
+                    state = {
+                        "type": "state",
+                        "players": nearby_players,
+                        "npcs": nearby_npcs,
+                        "t": now,
+                    }
+                    await ws.send_text(json.dumps(state))
                 except Exception:
                     pass
 
@@ -961,17 +1113,62 @@ async def game_loop():
         await asyncio.sleep(max(0, TICK_INTERVAL - elapsed))
 
 
+def _do_batch_save(player_data: list, machine_snapshots: list):
+    """Run in a thread — no async, no blocking the game loop.
+    Uses a dedicated DB connection to avoid sharing with the asyncio thread."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(**db.PG_CONFIG)
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            if player_data:
+                from psycopg2.extras import execute_values
+                values = [(uid, x, y, z, json.dumps(inv)) for uid, x, y, z, inv in player_data]
+                execute_values(
+                    cur,
+                    """INSERT INTO player_state (user_id, x, y, z, inventory)
+                       VALUES %s
+                       ON CONFLICT (user_id) DO UPDATE SET
+                           x=EXCLUDED.x, y=EXCLUDED.y, z=EXCLUDED.z,
+                           inventory=EXCLUDED.inventory""",
+                    values, page_size=200,
+                )
+            if machine_snapshots:
+                from psycopg2.extras import execute_values
+                m_values = [
+                    (m.machine_id, m.machine_type, m.wx, m.wy, m.wz, m.owner_id,
+                     json.dumps(m.inventory), json.dumps(m.output), m.recipe)
+                    for m in machine_snapshots
+                ]
+                execute_values(
+                    cur,
+                    """INSERT INTO machines (machine_id, machine_type, wx, wy, wz, owner_id, inventory, output, recipe)
+                       VALUES %s
+                       ON CONFLICT (machine_id) DO UPDATE SET
+                           inventory=EXCLUDED.inventory, output=EXCLUDED.output, recipe=EXCLUDED.recipe""",
+                    m_values, page_size=200,
+                )
+        conn.close()
+    except Exception as e:
+        print(f"[SAVE-ERROR] Batch save failed: {e}")
+
+
 async def auto_save_loop():
-    """Periodically save all player states and world state."""
+    """Periodically save all player states and world state in a background thread."""
     while True:
         await asyncio.sleep(SAVE_INTERVAL)
-        # Save all online players
-        for ws_id, player in [(wid, players.get_player(wid)) for wid in list(ws_to_user.keys())]:
-            if player:
-                save_player(ws_id, player)
-        # Save machines
-        db.save_all_machines(machine_mgr.get_all())
-        print(f"[SAVE] Auto-saved {len(ws_to_user)} players, {len(machine_mgr.get_all())} machines")
+        # Snapshot data for thread (avoid race conditions)
+        player_data = []
+        for ws_id in list(ws_to_user.keys()):
+            player = players.get_player(ws_id)
+            uid = ws_to_user.get(ws_id)
+            if player and uid:
+                player_data.append((uid, player.x, player.y, player.z, dict(player.inventory)))
+        machine_snapshots = machine_mgr.get_all()
+        # Run in thread so game loop isn't blocked
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _do_batch_save, player_data, machine_snapshots)
+        print(f"[SAVE] Auto-saved {len(player_data)} players, {len(machine_snapshots)} machines")
 
 
 if __name__ == "__main__":

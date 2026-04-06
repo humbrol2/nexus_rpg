@@ -50,7 +50,11 @@ export class GameSocket {
           window.location.reload();
           return;
         }
-        this._emit(msg.type, msg);
+        if (msg.type === 'batch') {
+          for (const m of msg.messages) this._emit(m.type, m);
+        } else {
+          this._emit(msg.type, msg);
+        }
       } catch (e) {
         console.error('[Socket] Parse error:', e);
       }

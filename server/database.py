@@ -1,25 +1,36 @@
 """PostgreSQL + Redis database layer for SpaceColony."""
 
 import json
+import os
 import psycopg2
 import psycopg2.extras
 import redis
 
-# ── Connection Config ──
+# Load .env file if present (for local dev / systemd EnvironmentFile)
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+# ── Connection Config (from environment variables) ──
 
 PG_CONFIG = {
-    "host": "10.0.0.54",
-    "port": 5432,
-    "dbname": "spacecolony",
-    "user": "humbrol2",
-    "password": "3e1779ab4980bd4c7133eb457f8d3a0b",
+    "host": os.environ.get("SC_PG_HOST", "10.0.0.54"),
+    "port": int(os.environ.get("SC_PG_PORT", "5432")),
+    "dbname": os.environ.get("SC_PG_DB", "spacecolony"),
+    "user": os.environ.get("SC_PG_USER", "humbrol2"),
+    "password": os.environ.get("SC_PG_PASSWORD", ""),
 }
 
 REDIS_CONFIG = {
-    "host": "10.0.0.54",
-    "port": 6379,
-    "password": "7e23dd7cf7c7aea497add4e479173480",
-    "db": 2,  # dedicated db for spacecolony
+    "host": os.environ.get("SC_REDIS_HOST", "10.0.0.54"),
+    "port": int(os.environ.get("SC_REDIS_PORT", "6379")),
+    "password": os.environ.get("SC_REDIS_PASSWORD", ""),
+    "db": int(os.environ.get("SC_REDIS_DB", "2")),
     "decode_responses": True,
 }
 
@@ -128,60 +139,57 @@ def set_banned(user_id: int, is_banned: bool) -> None:
 # ── Player State ──
 
 def load_player_state(user_id: int) -> dict:
-    # Fresh connection to avoid stale data from connection pooling
-    conn = psycopg2.connect(**PG_CONFIG)
-    conn.autocommit = True
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("SELECT x, y, inventory FROM player_state WHERE user_id = %s", (user_id,))
+    # Use main connection with rollback to ensure fresh read
+    pg = get_pg()
+    with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT x, y, z, inventory FROM player_state WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
-    conn.close()
     if row:
         inv = row["inventory"]
         if isinstance(inv, str):
             inv = json.loads(inv)
-        return {"x": row["x"], "y": row["y"], "inventory": inv}
-    return {"x": 1024.0, "y": 1024.0, "inventory": {}}
+        return {"x": row["x"], "y": row["y"], "z": row.get("z", 0), "inventory": inv}
+    return {"x": 1024.0, "y": 1024.0, "z": 0, "inventory": {}}
 
 
-def save_player_state(user_id: int, x: float, y: float, inventory: dict) -> None:
-    # Write directly to PostgreSQL
+def save_player_state(user_id: int, x: float, y: float, inventory: dict, z: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO player_state (user_id, x, y, inventory, updated_at)
-               VALUES (%s, %s, %s, %s, NOW())
+            """INSERT INTO player_state (user_id, x, y, z, inventory, updated_at)
+               VALUES (%s, %s, %s, %s, %s, NOW())
                ON CONFLICT (user_id) DO UPDATE SET
-                   x=EXCLUDED.x, y=EXCLUDED.y,
+                   x=EXCLUDED.x, y=EXCLUDED.y, z=EXCLUDED.z,
                    inventory=EXCLUDED.inventory,
                    updated_at=NOW()""",
-            (user_id, x, y, json.dumps(inventory)),
+            (user_id, x, y, z, json.dumps(inventory)),
         )
 
 
 # ── Building Ownership ──
 
-def load_building_owners() -> dict[tuple[int, int], dict]:
-    """Returns {(wx,wy): {"user_id": int, "original_tile": int}}"""
+def load_building_owners() -> dict[tuple[int, int, int], dict]:
+    """Returns {(wx,wy,wz): {"user_id": int, "original_tile": int}}"""
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("SELECT wx, wy, user_id, original_tile FROM building_owners")
-        return {(r[0], r[1]): {"user_id": r[2], "original_tile": r[3]} for r in cur.fetchall()}
+        cur.execute("SELECT wx, wy, COALESCE(wz, 0), user_id, original_tile FROM building_owners")
+        return {(r[0], r[1], r[2]): {"user_id": r[3], "original_tile": r[4]} for r in cur.fetchall()}
 
 
-def save_building_owner(wx: int, wy: int, user_id: int, original_tile: int = 3) -> None:
+def save_building_owner(wx: int, wy: int, user_id: int, original_tile: int = 3, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO building_owners (wx, wy, user_id, original_tile) VALUES (%s, %s, %s, %s)
-               ON CONFLICT (wx, wy) DO UPDATE SET user_id=EXCLUDED.user_id, original_tile=EXCLUDED.original_tile""",
-            (wx, wy, user_id, original_tile),
+            """INSERT INTO building_owners (wx, wy, wz, user_id, original_tile) VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (wx, wy, wz) DO UPDATE SET user_id=EXCLUDED.user_id, original_tile=EXCLUDED.original_tile""",
+            (wx, wy, wz, user_id, original_tile),
         )
 
 
-def delete_building_owner(wx: int, wy: int) -> None:
+def delete_building_owner(wx: int, wy: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("DELETE FROM building_owners WHERE wx = %s AND wy = %s", (wx, wy))
+        cur.execute("DELETE FROM building_owners WHERE wx = %s AND wy = %s AND wz = %s", (wx, wy, wz))
 
 
 # ── Research ──
@@ -218,27 +226,27 @@ def save_research(user_id: int, research_data: dict) -> None:
 
 # ── World Modifications ──
 
-def load_world_mods() -> dict[tuple[int, int], int]:
+def load_world_mods() -> dict[tuple[int, int, int], int]:
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("SELECT wx, wy, tile_id FROM world_mods")
-        return {(r[0], r[1]): r[2] for r in cur.fetchall()}
+        cur.execute("SELECT wx, wy, COALESCE(wz, 0), tile_id FROM world_mods")
+        return {(r[0], r[1], r[2]): r[3] for r in cur.fetchall()}
 
 
-def save_world_mod(wx: int, wy: int, tile_id: int) -> None:
+def save_world_mod(wx: int, wy: int, tile_id: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO world_mods (wx, wy, tile_id) VALUES (%s, %s, %s)
-               ON CONFLICT (wx, wy) DO UPDATE SET tile_id=EXCLUDED.tile_id""",
-            (wx, wy, tile_id),
+            """INSERT INTO world_mods (wx, wy, wz, tile_id) VALUES (%s, %s, %s, %s)
+               ON CONFLICT (wx, wy, wz) DO UPDATE SET tile_id=EXCLUDED.tile_id""",
+            (wx, wy, wz, tile_id),
         )
 
 
-def delete_world_mod(wx: int, wy: int) -> None:
+def delete_world_mod(wx: int, wy: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("DELETE FROM world_mods WHERE wx = %s AND wy = %s", (wx, wy))
+        cur.execute("DELETE FROM world_mods WHERE wx = %s AND wy = %s AND wz = %s", (wx, wy, wz))
 
 
 # ── Machines ──
@@ -247,7 +255,7 @@ def load_machines() -> list[dict]:
     pg = get_pg()
     with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT machine_id, machine_type, wx, wy, owner_id, inventory, output, recipe FROM machines"
+            "SELECT machine_id, machine_type, wx, wy, COALESCE(wz, 0) as wz, owner_id, inventory, output, recipe FROM machines"
         )
         machines = []
         for row in cur.fetchall():
@@ -264,33 +272,63 @@ def save_machine(m) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO machines (machine_id, machine_type, wx, wy, owner_id, inventory, output, recipe)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """INSERT INTO machines (machine_id, machine_type, wx, wy, wz, owner_id, inventory, output, recipe)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (machine_id) DO UPDATE SET
                    inventory=EXCLUDED.inventory, output=EXCLUDED.output, recipe=EXCLUDED.recipe""",
-            (m.machine_id, m.machine_type, m.wx, m.wy, m.owner_id,
+            (m.machine_id, m.machine_type, m.wx, m.wy, m.wz, m.owner_id,
              json.dumps(m.inventory), json.dumps(m.output), m.recipe),
         )
 
 
-def delete_machine(wx: int, wy: int) -> None:
+def delete_machine(wx: int, wy: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("DELETE FROM machines WHERE wx = %s AND wy = %s", (wx, wy))
+        cur.execute("DELETE FROM machines WHERE wx = %s AND wy = %s AND wz = %s", (wx, wy, wz))
 
 
 def save_all_machines(machines: list) -> None:
+    if not machines:
+        return
     pg = get_pg()
     with pg.cursor() as cur:
-        for m in machines:
-            cur.execute(
-                """INSERT INTO machines (machine_id, machine_type, wx, wy, owner_id, inventory, output, recipe)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (machine_id) DO UPDATE SET
-                       inventory=EXCLUDED.inventory, output=EXCLUDED.output, recipe=EXCLUDED.recipe""",
-                (m.machine_id, m.machine_type, m.wx, m.wy, m.owner_id,
-                 json.dumps(m.inventory), json.dumps(m.output), m.recipe),
-            )
+        # Batch upsert using execute_values for much better performance
+        from psycopg2.extras import execute_values
+        values = [
+            (m.machine_id, m.machine_type, m.wx, m.wy, m.wz, m.owner_id,
+             json.dumps(m.inventory), json.dumps(m.output), m.recipe)
+            for m in machines
+        ]
+        execute_values(
+            cur,
+            """INSERT INTO machines (machine_id, machine_type, wx, wy, wz, owner_id, inventory, output, recipe)
+               VALUES %s
+               ON CONFLICT (machine_id) DO UPDATE SET
+                   inventory=EXCLUDED.inventory, output=EXCLUDED.output, recipe=EXCLUDED.recipe""",
+            values,
+            page_size=200,
+        )
+
+
+def save_all_players(player_data: list[tuple[int, float, float, int, dict]]) -> None:
+    """Batch save player states. Each entry: (user_id, x, y, z, inventory)."""
+    if not player_data:
+        return
+    pg = get_pg()
+    with pg.cursor() as cur:
+        from psycopg2.extras import execute_values
+        values = [(uid, x, y, z, json.dumps(inv)) for uid, x, y, z, inv in player_data]
+        execute_values(
+            cur,
+            """INSERT INTO player_state (user_id, x, y, z, inventory, updated_at)
+               VALUES %s
+               ON CONFLICT (user_id) DO UPDATE SET
+                   x=EXCLUDED.x, y=EXCLUDED.y, z=EXCLUDED.z,
+                   inventory=EXCLUDED.inventory,
+                   updated_at=NOW()""",
+            values,
+            page_size=200,
+        )
 
 
 # ── Chat Log ──
@@ -358,39 +396,39 @@ def rename_claim(claim_id: int, user_id: int, name: str) -> bool:
 
 # ── Signs ──
 
-def save_sign(wx: int, wy: int, text: str, owner_id: int) -> None:
+def save_sign(wx: int, wy: int, text: str, owner_id: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO signs (wx, wy, text, owner_id) VALUES (%s, %s, %s, %s)
-               ON CONFLICT (wx, wy) DO UPDATE SET text=EXCLUDED.text""",
-            (wx, wy, text, owner_id),
+            """INSERT INTO signs (wx, wy, wz, text, owner_id) VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT (wx, wy, wz) DO UPDATE SET text=EXCLUDED.text""",
+            (wx, wy, wz, text, owner_id),
         )
 
 
-def get_sign(wx: int, wy: int) -> dict | None:
+def get_sign(wx: int, wy: int, wz: int = 0) -> dict | None:
     pg = get_pg()
     with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("SELECT wx, wy, text, owner_id FROM signs WHERE wx = %s AND wy = %s", (wx, wy))
+        cur.execute("SELECT wx, wy, wz, text, owner_id FROM signs WHERE wx = %s AND wy = %s AND wz = %s", (wx, wy, wz))
         row = cur.fetchone()
         return dict(row) if row else None
 
 
-def get_signs_in_chunk(cx: int, cy: int, chunk_size: int = 64) -> list[dict]:
+def get_signs_in_chunk(cx: int, cy: int, chunk_size: int = 64, cz: int = 0) -> list[dict]:
     pg = get_pg()
     bx, by = cx * chunk_size, cy * chunk_size
     with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT wx, wy, text, owner_id FROM signs WHERE wx >= %s AND wx < %s AND wy >= %s AND wy < %s",
-            (bx, bx + chunk_size, by, by + chunk_size),
+            "SELECT wx, wy, wz, text, owner_id FROM signs WHERE wx >= %s AND wx < %s AND wy >= %s AND wy < %s AND wz = %s",
+            (bx, bx + chunk_size, by, by + chunk_size, cz),
         )
         return [dict(r) for r in cur.fetchall()]
 
 
-def delete_sign(wx: int, wy: int) -> None:
+def delete_sign(wx: int, wy: int, wz: int = 0) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
-        cur.execute("DELETE FROM signs WHERE wx = %s AND wy = %s", (wx, wy))
+        cur.execute("DELETE FROM signs WHERE wx = %s AND wy = %s AND wz = %s", (wx, wy, wz))
 
 
 # ── Chat Log ──

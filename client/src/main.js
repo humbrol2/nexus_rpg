@@ -25,8 +25,7 @@ function startGame() {
     'btn-menu-crafting': 'toggleCrafting',
     'btn-menu-research': 'toggleResearch',
     'btn-menu-map': 'toggleWorldMap',
-    'btn-menu-character': 'toggleCharacter',
-    'btn-menu-settings': 'toggleSettings',
+    'btn-menu-help': 'toggleHelp',
   };
 
   for (const [btnId, action] of Object.entries(menuActions)) {

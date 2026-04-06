@@ -28,12 +28,20 @@ ALIEN_TREE = 11
 WALL = 100
 FLOOR = 101
 
+# Underground tile IDs
+CAVE_FLOOR = 12
+CAVE_WALL = 13
+DEEP_IRON = 14
+DEEP_COPPER = 15
+RARE_CRYSTAL = 16
+
 
 @dataclass
 class Chunk:
     cx: int
     cy: int
-    tiles: list[list[int]]
+    cz: int = 0
+    tiles: list[list[int]] = None
 
     def to_flat(self) -> list[int]:
         flat = []
@@ -49,13 +57,15 @@ class WorldGenerator:
         self._moisture = OpenSimplex(seed + 1)
         self._ore = OpenSimplex(seed + 2)
         self._detail = OpenSimplex(seed + 3)
-        self._chunk_cache: dict[tuple[int, int], Chunk] = {}
-        self._modifications: dict[tuple[int, int], int] = {}
-        self._ore_hp: dict[tuple[int, int], int] = {}
-        self._respawn_queue: dict[tuple[int, int], tuple[int, float]] = {}
+        self._cave = OpenSimplex(seed + 100)
+        self._cave_ore = OpenSimplex(seed + 101)
+        self._chunk_cache: dict[tuple[int, int, int], Chunk] = {}
+        self._modifications: dict[tuple[int, int, int], int] = {}
+        self._ore_hp: dict[tuple[int, int, int], int] = {}
+        self._respawn_queue: dict[tuple[int, int, int], tuple[int, float]] = {}
 
-    def get_ore_hp(self, wx: int, wy: int) -> int | None:
-        return self._ore_hp.get((wx, wy))
+    def get_ore_hp(self, wx: int, wy: int, wz: int = 0) -> int | None:
+        return self._ore_hp.get((wx, wy, wz))
 
     def get_ore_max_hp(self, tile_id: int) -> int:
         if tile_id in MINABLE:
@@ -65,8 +75,8 @@ class WorldGenerator:
     def get_minable_info(self, tile_id: int) -> dict | None:
         return MINABLE.get(tile_id)
 
-    def damage_ore(self, wx: int, wy: int, tile_id: int) -> tuple[bool, int]:
-        key = (wx, wy)
+    def damage_ore(self, wx: int, wy: int, tile_id: int, wz: int = 0) -> tuple[bool, int]:
+        key = (wx, wy, wz)
         max_hp = self.get_ore_max_hp(tile_id)
         current = self._ore_hp.get(key, max_hp)
         current -= 1
@@ -80,32 +90,29 @@ class WorldGenerator:
             self._ore_hp[key] = current
             return False, current
 
-    def tick_respawns(self) -> list[tuple[int, int, int]]:
+    def tick_respawns(self) -> list[tuple[int, int, int, int]]:
+        """Returns list of (wx, wy, wz, tile_id) for respawned tiles."""
         respawned = []
         now = time.time()
         expired = []
         for key, (tile_id, respawn_at) in self._respawn_queue.items():
             if now >= respawn_at:
-                wx, wy = key
+                wx, wy, wz = key
                 current = self._modifications.get(key)
-                # Respawn if tile is dirt (mined) — nothing built on it
-                if current == DIRT:
-                    # Remove the in-memory modification so procedural tile shows
+                if current == DIRT or current == CAVE_FLOOR:
                     del self._modifications[key]
-                    respawned.append((wx, wy, tile_id))
-                # Also respawn if no modification exists (was already cleaned)
+                    respawned.append((wx, wy, wz, tile_id))
                 elif current is None:
-                    respawned.append((wx, wy, tile_id))
-                # If something else was built there (path, wall), skip respawn
+                    respawned.append((wx, wy, wz, tile_id))
                 expired.append(key)
         for key in expired:
             del self._respawn_queue[key]
         return respawned
 
-    def get_chunk(self, cx: int, cy: int) -> Chunk:
-        key = (cx, cy)
+    def get_chunk(self, cx: int, cy: int, cz: int = 0) -> Chunk:
+        key = (cx, cy, cz)
         if key not in self._chunk_cache:
-            self._chunk_cache[key] = self._generate_chunk(cx, cy)
+            self._chunk_cache[key] = self._generate_chunk(cx, cy, cz)
         chunk = self._chunk_cache[key]
         base_x = cx * CHUNK_SIZE
         base_y = cy * CHUNK_SIZE
@@ -113,33 +120,39 @@ class WorldGenerator:
         modified_tiles = [row[:] for row in chunk.tiles]
         for ly in range(CHUNK_SIZE):
             for lx in range(CHUNK_SIZE):
-                mod_key = (base_x + lx, base_y + ly)
+                mod_key = (base_x + lx, base_y + ly, cz)
                 if mod_key in self._modifications:
                     modified_tiles[ly][lx] = self._modifications[mod_key]
                     has_mods = True
         if has_mods:
-            return Chunk(cx=cx, cy=cy, tiles=modified_tiles)
+            return Chunk(cx=cx, cy=cy, cz=cz, tiles=modified_tiles)
         return chunk
 
-    def get_tile(self, wx: int, wy: int) -> int:
-        mod_key = (wx, wy)
+    def get_tile(self, wx: int, wy: int, wz: int = 0) -> int:
+        mod_key = (wx, wy, wz)
         if mod_key in self._modifications:
             return self._modifications[mod_key]
         cx = wx // CHUNK_SIZE
         cy = wy // CHUNK_SIZE
         lx = wx % CHUNK_SIZE
         ly = wy % CHUNK_SIZE
-        chunk = self.get_chunk(cx, cy)
+        chunk = self.get_chunk(cx, cy, wz)
         return chunk.tiles[ly][lx]
 
-    def set_tile(self, wx: int, wy: int, tile_id: int) -> None:
-        self._modifications[(wx, wy)] = tile_id
+    def set_tile(self, wx: int, wy: int, tile_id: int, wz: int = 0) -> None:
+        self._modifications[(wx, wy, wz)] = tile_id
 
-    def is_solid(self, wx: int, wy: int) -> bool:
-        tile = self.get_tile(wx, wy)
+    def is_solid(self, wx: int, wy: int, wz: int = 0) -> bool:
+        tile = self.get_tile(wx, wy, wz)
         return tile in SOLID_TILES
 
-    def _generate_chunk(self, cx: int, cy: int) -> Chunk:
+    def _generate_chunk(self, cx: int, cy: int, cz: int = 0) -> Chunk:
+        if cz == 0:
+            return self._generate_surface(cx, cy)
+        else:
+            return self._generate_underground(cx, cy, cz)
+
+    def _generate_surface(self, cx: int, cy: int) -> Chunk:
         tiles: list[list[int]] = []
         base_x = cx * CHUNK_SIZE
         base_y = cy * CHUNK_SIZE
@@ -151,7 +164,38 @@ class WorldGenerator:
                 tile = self._get_tile(wx, wy)
                 row.append(tile)
             tiles.append(row)
-        return Chunk(cx=cx, cy=cy, tiles=tiles)
+        return Chunk(cx=cx, cy=cy, cz=0, tiles=tiles)
+
+    def _generate_underground(self, cx: int, cy: int, cz: int) -> Chunk:
+        tiles: list[list[int]] = []
+        base_x = cx * CHUNK_SIZE
+        base_y = cy * CHUNK_SIZE
+        # Use different noise offset per Z level
+        z_offset = abs(cz) * 1000
+        for ly in range(CHUNK_SIZE):
+            row: list[int] = []
+            for lx in range(CHUNK_SIZE):
+                wx = base_x + lx
+                wy = base_y + ly
+                cave_val = self._cave.noise2((wx + z_offset) * 0.05, (wy + z_offset) * 0.05)
+                ore_val = self._cave_ore.noise2((wx + z_offset) * 0.08, (wy + z_offset) * 0.08)
+
+                if cave_val > 0.1:
+                    # Solid cave wall (~45%)
+                    tile = CAVE_WALL
+                else:
+                    # Open cave floor with ore
+                    if ore_val > 0.7:
+                        tile = DEEP_IRON
+                    elif ore_val > 0.6:
+                        tile = DEEP_COPPER
+                    elif ore_val > 0.55 and abs(cz) >= 2:
+                        tile = RARE_CRYSTAL
+                    else:
+                        tile = CAVE_FLOOR
+                row.append(tile)
+            tiles.append(row)
+        return Chunk(cx=cx, cy=cy, cz=cz, tiles=tiles)
 
     def _get_tile(self, wx: int, wy: int) -> int:
         e_scale = 0.008

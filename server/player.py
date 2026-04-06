@@ -10,6 +10,7 @@ class Player:
     id: str
     x: float  # world pixel position
     y: float
+    z: int = 0  # Z layer (0=surface, -1=underground, etc.)
     speed: float = 200.0  # pixels per second
     name: str = ""
     inventory: dict[str, int] = field(default_factory=dict)
@@ -21,6 +22,10 @@ class Player:
     @property
     def chunk_y(self) -> int:
         return int(self.y // (CHUNK_SIZE * 32))
+
+    @property
+    def chunk_z(self) -> int:
+        return self.z
 
     def add_item(self, item: str, count: int = 1) -> None:
         self.inventory[item] = self.inventory.get(item, 0) + count
@@ -49,6 +54,7 @@ class Player:
             "id": self.id,
             "x": self.x,
             "y": self.y,
+            "z": self.z,
             "name": self.name,
         }
 

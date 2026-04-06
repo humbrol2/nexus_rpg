@@ -17,6 +17,7 @@ MACHINE_MINER = 200
 MACHINE_FABRICATOR = 201
 MACHINE_STORAGE = 202
 MACHINE_FURNACE = 203
+CHEST_TYPES = {204, 205, 206, 207}
 
 # Convert MACHINE_RECIPES to old tuple format for compatibility
 RECIPES = {}
@@ -36,7 +37,8 @@ class Machine:
     machine_type: int
     wx: int
     wy: int
-    owner_id: str
+    wz: int = 0
+    owner_id: str = ""
     inventory: dict[str, int] = field(default_factory=dict)
     output: dict[str, int] = field(default_factory=dict)
     recipe: str | None = None
@@ -78,6 +80,20 @@ class Machine:
         self.output.clear()
         return items
 
+    def take_from_inventory(self, item: str, count: int = 1) -> int:
+        available = self.inventory.get(item, 0)
+        actual = min(count, available)
+        if actual > 0:
+            self.inventory[item] = available - actual
+            if self.inventory[item] == 0:
+                del self.inventory[item]
+        return actual
+
+    def take_all_inventory(self) -> dict[str, int]:
+        items = dict(self.inventory)
+        self.inventory.clear()
+        return items
+
     def to_dict(self) -> dict:
         return {
             "machine_id": self.machine_id,
@@ -85,6 +101,7 @@ class Machine:
             "name": self.name,
             "wx": self.wx,
             "wy": self.wy,
+            "wz": self.wz,
             "owner_id": self.owner_id,
             "inventory": dict(self.inventory),
             "output": dict(self.output),
@@ -97,26 +114,38 @@ class Machine:
 class MachineManager:
     def __init__(self):
         self._machines: dict[str, Machine] = {}
-        self._by_pos: dict[tuple[int, int], str] = {}
+        self._by_pos: dict[tuple[int, int, int], str] = {}
+        self._by_chunk: dict[tuple[int, int, int], set[str]] = {}  # spatial index
         self._next_id = 0
 
-    def place(self, machine_type: int, wx: int, wy: int, owner_id: str) -> Machine:
+    @staticmethod
+    def _chunk_key(wx: int, wy: int, wz: int = 0) -> tuple[int, int, int]:
+        return (wx // CHUNK_SIZE, wy // CHUNK_SIZE, wz)
+
+    def place(self, machine_type: int, wx: int, wy: int, owner_id: str, wz: int = 0) -> Machine:
         self._next_id += 1
         mid = f"m_{self._next_id}"
         max_stor = MACHINE_MAX_STORAGE.get(machine_type, 50)
-        machine = Machine(machine_id=mid, machine_type=machine_type, wx=wx, wy=wy, owner_id=owner_id, max_storage=max_stor)
+        machine = Machine(machine_id=mid, machine_type=machine_type, wx=wx, wy=wy, wz=wz, owner_id=owner_id, max_storage=max_stor)
         self._machines[mid] = machine
-        self._by_pos[(wx, wy)] = mid
+        self._by_pos[(wx, wy, wz)] = mid
+        ck = self._chunk_key(wx, wy, wz)
+        self._by_chunk.setdefault(ck, set()).add(mid)
         return machine
 
-    def remove(self, wx: int, wy: int) -> Machine | None:
-        mid = self._by_pos.pop((wx, wy), None)
+    def remove(self, wx: int, wy: int, wz: int = 0) -> Machine | None:
+        mid = self._by_pos.pop((wx, wy, wz), None)
         if mid:
+            ck = self._chunk_key(wx, wy, wz)
+            if ck in self._by_chunk:
+                self._by_chunk[ck].discard(mid)
+                if not self._by_chunk[ck]:
+                    del self._by_chunk[ck]
             return self._machines.pop(mid, None)
         return None
 
-    def get_at(self, wx: int, wy: int) -> Machine | None:
-        mid = self._by_pos.get((wx, wy))
+    def get_at(self, wx: int, wy: int, wz: int = 0) -> Machine | None:
+        mid = self._by_pos.get((wx, wy, wz))
         if mid:
             return self._machines.get(mid)
         return None
@@ -124,14 +153,9 @@ class MachineManager:
     def get_all(self) -> list[Machine]:
         return list(self._machines.values())
 
-    def get_in_chunk(self, cx: int, cy: int) -> list[Machine]:
-        machines = []
-        base_x = cx * CHUNK_SIZE
-        base_y = cy * CHUNK_SIZE
-        for m in self._machines.values():
-            if base_x <= m.wx < base_x + CHUNK_SIZE and base_y <= m.wy < base_y + CHUNK_SIZE:
-                machines.append(m)
-        return machines
+    def get_in_chunk(self, cx: int, cy: int, cz: int = 0) -> list[Machine]:
+        mids = self._by_chunk.get((cx, cy, cz), set())
+        return [self._machines[mid] for mid in mids if mid in self._machines]
 
     def tick(self, dt: float, world) -> list[dict]:
         events = []

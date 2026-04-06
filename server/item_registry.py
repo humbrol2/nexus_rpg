@@ -46,6 +46,12 @@ TILES = {
     201: {"name": "fabricator",   "label": "Fabricator",    "solid": True,  "speed": 1.0, "color": [102,136,204]},
     202: {"name": "storage",      "label": "Storage Crate", "solid": True, "speed": 1.0, "color": [136,102,68]},
     203: {"name": "furnace",      "label": "Furnace",      "solid": True,  "speed": 1.0, "color": [204,68,34]},
+    # Underground tiles
+    12: {"name": "cave_floor",   "label": "Cave Floor",   "solid": False, "speed": 0.9, "color": [50,40,30]},
+    13: {"name": "cave_wall",    "label": "Cave Wall",    "solid": True,  "speed": 1.0, "color": [35,30,25]},
+    14: {"name": "deep_iron",    "label": "Deep Iron",    "solid": False, "speed": 1.0, "color": [160,100,55]},
+    15: {"name": "deep_copper",  "label": "Deep Copper",  "solid": False, "speed": 1.0, "color": [190,125,55]},
+    16: {"name": "rare_crystal", "label": "Rare Crystal",  "solid": False, "speed": 1.0, "color": [160,220,255]},
     # Chests (machine types)
     204: {"name": "wood_chest",   "label": "Wood Chest",   "solid": True, "speed": 1.0, "color": [139,107,58]},
     205: {"name": "stone_chest",  "label": "Stone Chest",  "solid": True, "speed": 1.0, "color": [95,95,90]},
@@ -67,6 +73,11 @@ MINABLE = {
     10: {"item": "crystal",    "drop": 1, "time": 2.5, "hp": 8,  "respawn": 600},
     11: {"item": "wood",       "drop": 3, "time": 2.0, "hp": 8,  "respawn": 180},
     100:{"item": "stone",      "drop": 1, "time": 1.0, "hp": 1,  "respawn": 0},
+    # Underground ores (richer yields)
+    13: {"item": "stone",      "drop": 3, "time": 2.0, "hp": 12, "respawn": 0},
+    14: {"item": "iron_ore",   "drop": 4, "time": 2.0, "hp": 20, "respawn": 300},
+    15: {"item": "copper_ore", "drop": 4, "time": 2.0, "hp": 20, "respawn": 300},
+    16: {"item": "crystal",    "drop": 3, "time": 3.0, "hp": 15, "respawn": 600},
 }
 
 # ══════════════════════════════════════════════════════════════════

@@ -93,6 +93,10 @@ export class HUDScene extends Phaser.Scene {
     this.worldMapOpen = false;
     this.worldMapElements = [];
 
+    // Help overlay
+    this.helpOpen = false;
+    this.helpElements = [];
+
     // Minimap
     this.minimapVisible = true;
     this.minimapCanvas = null;
@@ -140,6 +144,31 @@ export class HUDScene extends Phaser.Scene {
         padding: { x: 10, y: 6 },
       }
     ).setOrigin(0.5).setDepth(1001).setVisible(false);
+
+    // Hint text (bottom-left, fades after a few seconds)
+    const cam = this.cameras.main;
+
+    // Z-level indicator (top-center, only visible underground)
+    this._zLevelText = this.add.text(cam.width / 2, 42, '', {
+      fontSize: '16px', fontFamily: 'monospace',
+      color: '#ff8844', fontStyle: 'bold',
+      backgroundColor: '#000000aa',
+      padding: { x: 10, y: 4 },
+    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false);
+    this.hintText = this.add.text(10, cam.height - 24,
+      'Press H for help  |  ` for chat', {
+        fontSize: '11px', fontFamily: 'monospace',
+        color: '#556655', backgroundColor: '#000000aa',
+        padding: { x: 6, y: 3 },
+      }
+    ).setDepth(1000);
+    // Fade out after 15 seconds
+    this.time.delayedCall(15000, () => {
+      this.tweens.add({
+        targets: this.hintText, alpha: 0, duration: 2000,
+        onComplete: () => this.hintText.setVisible(false),
+      });
+    });
 
     // Hotbar / Toolbar
     this._createHotbar();
@@ -627,6 +656,13 @@ export class HUDScene extends Phaser.Scene {
     this.statusText.setText(text);
   }
 
+  setZLevel(z) {
+    if (this._zLevelText) {
+      this._zLevelText.setText(z === 0 ? '' : `UNDERGROUND ${z}`);
+      this._zLevelText.setVisible(z !== 0);
+    }
+  }
+
   hideStatus() {
     this.statusText.setVisible(false);
   }
@@ -640,6 +676,12 @@ export class HUDScene extends Phaser.Scene {
   // ── Machine UI ──
 
   showMachineUI(machine) {
+    // Route to chest UI for chest types
+    if (machine.machine_type >= 204 && machine.machine_type <= 207) {
+      this.showChestUI(machine);
+      return;
+    }
+
     this.closeMachineUI();
     this.machineUIOpen = true;
     this.machineUIData = machine;
@@ -663,6 +705,18 @@ export class HUDScene extends Phaser.Scene {
       ...ts, fontSize: '15px', color: '#ffcc44',
     }).setDepth(2001);
     this.machineUIElements.push(title);
+
+    const machCloseBtn = this.add.text(px + panelW - 12, py + 6, '\u2715', {
+      fontSize: '18px', fontFamily: 'monospace', color: '#334466',
+    }).setOrigin(1, 0).setDepth(2001);
+    this.machineUIElements.push(machCloseBtn);
+    const machCloseHit = this.add.rectangle(
+      px + panelW - 12 - 9, py + 14, 24, 24, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(2002);
+    this.machineUIElements.push(machCloseHit);
+    machCloseHit.on('pointerover', () => machCloseBtn.setColor('#ff6644'));
+    machCloseHit.on('pointerout', () => machCloseBtn.setColor('#334466'));
+    machCloseHit.on('pointerup', () => this.closeMachineUI());
 
     let yOff = py + 35;
 
@@ -743,9 +797,194 @@ export class HUDScene extends Phaser.Scene {
     );
   }
 
+  // ── Chest UI (grid-based) ──
+
+  showChestUI(machine) {
+    this.closeMachineUI();
+    this.machineUIOpen = true;
+    this.machineUIData = machine;
+
+    const cam = this.cameras.main;
+    const cols = 6;
+    const cellSize = 68;
+    const cellPad = 5;
+    const titleBarH = 36;
+    const pad = 12;
+    const totalItems = Object.values(machine.inventory).reduce((a, b) => a + b, 0);
+    const maxSlots = machine.max_storage || 50;
+    const displaySlots = Math.max(Object.keys(machine.inventory).length, Math.min(maxSlots, 18), 6);
+    const rows = Math.ceil(displaySlots / cols);
+    const gridW = cols * (cellSize + cellPad) - cellPad;
+    const panelW = gridW + pad * 2;
+    const controlH = 28;
+    const panelH = titleBarH + pad + rows * (cellSize + cellPad) - cellPad + pad + controlH;
+
+    const startX = this._chestPosX ?? (cam.width / 2 - panelW - 10);
+    const startY = this._chestPosY ?? (cam.height - panelH) / 2;
+
+    const container = this.add.container(startX, startY).setDepth(4000);
+    this.machineUIElements.push(container);
+
+    // Panel background
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d1117, 0.95);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 8);
+    bg.lineStyle(1, 0xcc8833, 0.4);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 8);
+    container.add(bg);
+
+    // Title bar
+    const titleBar = this.add.graphics();
+    titleBar.fillStyle(0x1a1510, 1);
+    titleBar.fillRoundedRect(0, 0, panelW, titleBarH, { tl: 8, tr: 8, bl: 0, br: 0 });
+    titleBar.lineStyle(1, 0xcc8833, 0.2);
+    titleBar.lineBetween(0, titleBarH, panelW, titleBarH);
+    container.add(titleBar);
+
+    container.add(this.add.text(pad, 10, `${machine.name}  (${totalItems}/${maxSlots})`, {
+      fontSize: '14px', fontFamily: 'monospace', color: '#cc8833', fontStyle: 'bold',
+    }));
+
+    const closeBtn = this.add.text(panelW - pad, 6, '\u2715', {
+      fontSize: '18px', fontFamily: 'monospace', color: '#664433',
+    }).setOrigin(1, 0);
+    container.add(closeBtn);
+    const closeBtnHit = this.add.rectangle(
+      startX + panelW - pad - 9, startY + 14, 24, 24, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(4006);
+    this.machineUIElements.push(closeBtnHit);
+    closeBtnHit.on('pointerover', () => closeBtn.setColor('#ff6644'));
+    closeBtnHit.on('pointerout', () => closeBtn.setColor('#664433'));
+    closeBtnHit.on('pointerup', () => this.closeMachineUI());
+
+    // Drag title bar
+    let dragging = false;
+    let dragOffX = 0, dragOffY = 0;
+    const dragHit = this.add.rectangle(
+      startX + panelW / 2, startY + titleBarH / 2,
+      panelW, titleBarH, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(4003);
+    this.machineUIElements.push(dragHit);
+
+    dragHit.on('pointerdown', (pointer) => {
+      dragging = true;
+      dragOffX = pointer.x - container.x;
+      dragOffY = pointer.y - container.y;
+    });
+    const onMove = (pointer) => {
+      if (!dragging) return;
+      container.x = pointer.x - dragOffX;
+      container.y = pointer.y - dragOffY;
+      dragHit.x = container.x + panelW / 2;
+      dragHit.y = container.y + titleBarH / 2;
+      this._chestPosX = container.x;
+      this._chestPosY = container.y;
+    };
+    const onUp = () => { dragging = false; };
+    this.input.on('pointermove', onMove);
+    this.input.on('pointerup', onUp);
+    this._chestDragCleanup = () => {
+      this.input.off('pointermove', onMove);
+      this.input.off('pointerup', onUp);
+    };
+
+    // Grid
+    const chestItems = Object.entries(machine.inventory);
+    for (let i = 0; i < displaySlots; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cx = pad + col * (cellSize + cellPad);
+      const cy = titleBarH + pad + row * (cellSize + cellPad);
+
+      const entry = chestItems[i];
+      const cell = this.add.graphics();
+
+      if (entry) {
+        const [itemKey, count] = entry;
+        const info = ITEM_INFO[itemKey];
+        const colorHex = info ? parseInt(info.color.replace('#', ''), 16) : 0x888888;
+        const label = info ? info.label : itemKey;
+
+        cell.fillStyle(0x1a1a10, 1);
+        cell.fillRoundedRect(cx, cy, cellSize, cellSize, 5);
+        cell.lineStyle(1, colorHex, 0.5);
+        cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 5);
+
+        // Icon swatch
+        const iconSize = 26;
+        const iconX = cx + (cellSize - iconSize) / 2;
+        const iconY = cy + 5;
+        cell.fillStyle(colorHex, 1);
+        cell.fillRoundedRect(iconX, iconY, iconSize, iconSize, 4);
+        cell.fillStyle(0xffffff, 0.18);
+        cell.fillRect(iconX + 2, iconY + 2, iconSize - 4, 6);
+
+        container.add(cell);
+
+        container.add(this.add.text(cx + cellSize / 2, cy + 35, label, {
+          fontSize: '9px', fontFamily: 'monospace', color: info?.color || '#888888',
+        }).setOrigin(0.5, 0));
+
+        container.add(this.add.text(cx + cellSize / 2, cy + 49, String(count), {
+          fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffffff',
+        }).setOrigin(0.5, 0));
+
+        // Click to withdraw
+        const clickZone = this.add.rectangle(
+          startX + cx + cellSize / 2, startY + cy + cellSize / 2,
+          cellSize, cellSize, 0x000000, 0
+        ).setInteractive({ useHandCursor: true }).setDepth(4005);
+        this.machineUIElements.push(clickZone);
+
+        const capturedItem = itemKey;
+        const capturedCount = count;
+        clickZone.on('pointerup', (pointer) => {
+          const gs = this.scene.get('GameScene');
+          if (!gs?.socket) return;
+          // Shift+click = full stack, normal click = 1
+          const amt = pointer.event.shiftKey ? capturedCount : 1;
+          gs.socket.send({
+            type: 'chest_withdraw_item',
+            wx: machine.wx, wy: machine.wy,
+            item: capturedItem, count: amt,
+          });
+        });
+      } else {
+        cell.fillStyle(0x0a0a08, 0.5);
+        cell.fillRoundedRect(cx, cy, cellSize, cellSize, 5);
+        cell.lineStyle(1, 0x151510, 0.3);
+        cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 5);
+        container.add(cell);
+      }
+    }
+
+    // Controls bar
+    const ctrlY = panelH - controlH;
+    container.add(this.add.text(pad, ctrlY + 6,
+      'Click: take 1 | Shift+Click: take all | Open [I]nventory to deposit', {
+        fontSize: '9px', fontFamily: 'monospace', color: '#554433',
+      }));
+
+    // Empty message
+    if (chestItems.length === 0) {
+      container.add(this.add.text(panelW / 2, titleBarH + pad + 20, 'Empty — open inventory to deposit items', {
+        fontSize: '11px', fontFamily: 'monospace', color: '#443322',
+      }).setOrigin(0.5, 0));
+    }
+
+    // Auto-open inventory for deposit
+    if (!this.inventoryOpen) {
+      this.showInventory();
+    }
+  }
+
   closeMachineUI() {
     this.machineUIOpen = false;
     this.machineUIData = null;
+    if (this._chestDragCleanup) {
+      this._chestDragCleanup();
+      this._chestDragCleanup = null;
+    }
     for (const el of this.machineUIElements) el.destroy();
     this.machineUIElements = [];
   }
@@ -810,9 +1049,17 @@ export class HUDScene extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
     }));
 
-    container.add(this.add.text(panelW - pad, 8, '[I] close', {
-      fontSize: '10px', fontFamily: 'monospace', color: '#445555',
-    }).setOrigin(1, 0));
+    const invCloseBtn = this.add.text(panelW - pad, 5, '\u2715', {
+      fontSize: '18px', fontFamily: 'monospace', color: '#335544',
+    }).setOrigin(1, 0);
+    container.add(invCloseBtn);
+    const invCloseHit = this.add.rectangle(
+      startX + panelW - pad - 9, startY + 14, 24, 24, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(3006);
+    this.inventoryElements.push(invCloseHit);
+    invCloseHit.on('pointerover', () => invCloseBtn.setColor('#ff6644'));
+    invCloseHit.on('pointerout', () => invCloseBtn.setColor('#335544'));
+    invCloseHit.on('pointerup', () => this.closeInventory());
 
     // Drag handle
     let dragging = false;
@@ -910,8 +1157,17 @@ export class HUDScene extends Phaser.Scene {
         });
 
         dragHandle.on('pointerup', (pointer) => {
-          console.log('[INV-CLICK] pointerup', capturedKey, 'isDragging:', isDragging, 'timeDiff:', Date.now() - (this._invClickTime || 0), 'placeable:', ITEM_INFO[capturedKey]?.placeable);
           if (!isDragging && Date.now() - (this._invClickTime || 0) < 300) {
+            // If chest is open, deposit to chest instead
+            if (this.machineUIOpen && this.machineUIData &&
+                this.machineUIData.machine_type >= 204 && this.machineUIData.machine_type <= 207) {
+              const gs = this.scene.get('GameScene');
+              if (gs) {
+                const amt = pointer.event.shiftKey ? (this.inventory[capturedKey] || 1) : 1;
+                gs._depositToMachine(capturedKey, amt);
+              }
+              return;
+            }
             // Special items — handle directly
             if (capturedKey === 'claim_flag') {
               const gs = this.scene.get('GameScene');
@@ -921,18 +1177,14 @@ export class HUDScene extends Phaser.Scene {
             }
             // Only assign placeable items to toolbar on click
             const itemInfo = ITEM_INFO[capturedKey];
-            console.log('[INV-CLICK] itemInfo?.placeable:', itemInfo?.placeable);
             if (itemInfo?.placeable) {
               let slotIdx = this.toolbarSlots.indexOf(capturedKey);
-              console.log('[INV-CLICK] existing slot:', slotIdx);
               if (slotIdx === -1) {
                 slotIdx = this.toolbarSlots.indexOf(null);
                 if (slotIdx === -1) slotIdx = 0;
                 this.assignToolbarSlot(slotIdx, capturedKey);
-                console.log('[INV-CLICK] assigned to slot:', slotIdx);
               }
               this.selectToolbarSlot(slotIdx);
-              console.log('[INV-CLICK] selected slot:', slotIdx, 'activeSlot:', this.activeToolbarSlot);
               this.showToast(`Selected: ${itemInfo.label} — click ground to place`);
             } else {
               this.showToast(`${info.label}: ${count}`);
@@ -990,6 +1242,126 @@ export class HUDScene extends Phaser.Scene {
     for (const el of this.inventoryElements) el.destroy();
     this.inventoryElements = [];
     this.inventoryContainer = null;
+  }
+
+  // ── Help Overlay ──
+
+  toggleHelp() {
+    if (this.helpOpen) {
+      this.closeHelp();
+    } else {
+      this.showHelp();
+    }
+  }
+
+  showHelp() {
+    this.closeHelp();
+    this.helpOpen = true;
+
+    const cam = this.cameras.main;
+    const panelW = 520;
+    const panelH = 310;
+    const px = (cam.width - panelW) / 2;
+    const py = (cam.height - panelH) / 2;
+
+    // Dimmed background
+    const dim = this.add.graphics().setDepth(9000);
+    dim.fillStyle(0x000000, 0.7);
+    dim.fillRect(0, 0, cam.width, cam.height);
+    this.helpElements.push(dim);
+
+    const container = this.add.container(px, py).setDepth(9001);
+    this.helpElements.push(container);
+
+    // Panel
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d1117, 0.97);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x00ff88, 0.3);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
+    container.add(bg);
+
+    const ts = { fontSize: '11px', fontFamily: 'monospace', color: '#ccddcc' };
+    const hs = { fontSize: '11px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold' };
+    const ks = { fontSize: '11px', fontFamily: 'monospace', color: '#ffcc44' };
+
+    container.add(this.add.text(panelW / 2, 12, 'CONTROLS', {
+      fontSize: '15px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
+    }).setOrigin(0.5, 0));
+
+    const helpCloseBtn = this.add.text(panelW - 14, 8, '\u2715', {
+      fontSize: '18px', fontFamily: 'monospace', color: '#335544',
+    }).setOrigin(1, 0);
+    container.add(helpCloseBtn);
+    const helpCloseHit = this.add.rectangle(
+      px + panelW - 14 - 9, py + 16, 24, 24, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(9002);
+    this.helpElements.push(helpCloseHit);
+    helpCloseHit.on('pointerover', () => helpCloseBtn.setColor('#ff6644'));
+    helpCloseHit.on('pointerout', () => helpCloseBtn.setColor('#335544'));
+    helpCloseHit.on('pointerup', () => this.closeHelp());
+
+    // Two-column layout
+    const colL = 16;   // left column x
+    const colR = 270;  // right column x
+    const keyW = 100;  // key label width
+
+    const addSection = (x, yPos, title) => {
+      container.add(this.add.text(x, yPos, title, hs));
+      return yPos + 17;
+    };
+    const addRow = (x, yPos, key, desc) => {
+      container.add(this.add.text(x + 4, yPos, key, ks));
+      container.add(this.add.text(x + keyW, yPos, desc, ts));
+      return yPos + 15;
+    };
+
+    // Left column
+    let yL = 40;
+    yL = addSection(colL, yL, 'MOVEMENT');
+    yL = addRow(colL, yL, 'W A S D', 'Move');
+    yL = addRow(colL, yL, 'Scroll', 'Zoom in/out');
+    yL += 4;
+    yL = addSection(colL, yL, 'PANELS');
+    yL = addRow(colL, yL, 'I', 'Inventory');
+    yL = addRow(colL, yL, 'C', 'Crafting');
+    yL = addRow(colL, yL, 'R', 'Research');
+    yL = addRow(colL, yL, 'M / TAB', 'World map');
+    yL = addRow(colL, yL, 'H', 'Help (this)');
+    yL = addRow(colL, yL, 'V', 'Toggle underground');
+    yL += 4;
+    yL = addSection(colL, yL, 'ACTIONS');
+    yL = addRow(colL, yL, 'L-Click', 'Mine / place / interact');
+    yL = addRow(colL, yL, 'R-Click', 'Pick up building');
+    yL = addRow(colL, yL, 'E', 'Interact at cursor');
+    yL = addRow(colL, yL, '1-9, 0', 'Select toolbar slot');
+    yL = addRow(colL, yL, 'ESC', 'Cancel action');
+
+    // Right column
+    let yR = 40;
+    yR = addSection(colR, yR, 'MACHINES & CHESTS');
+    yR = addRow(colR, yR, 'L-Click', 'Open UI');
+    yR = addRow(colR, yR, 'G', 'Grab all items');
+    yR = addRow(colR, yR, 'Q', 'Close UI');
+    yR = addRow(colR, yR, 'Shift+Click', 'Transfer stack');
+    yR += 4;
+    yR = addSection(colR, yR, 'CHAT');
+    yR = addRow(colR, yR, '`  (backtick)', 'Open chat');
+    yR = addRow(colR, yR, 'Enter', 'Send message');
+    yR = addRow(colR, yR, 'Escape', 'Close chat');
+
+    // Click anywhere to close
+    const closeHit = this.add.rectangle(
+      cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0
+    ).setInteractive().setDepth(9000);
+    this.helpElements.push(closeHit);
+    closeHit.on('pointerup', () => this.closeHelp());
+  }
+
+  closeHelp() {
+    this.helpOpen = false;
+    for (const el of this.helpElements) el.destroy();
+    this.helpElements = [];
   }
 
   // ── Crafting Menu ──
@@ -1054,9 +1426,17 @@ export class HUDScene extends Phaser.Scene {
     container.add(this.add.text(pad, 11, 'CRAFTING', {
       fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
     }));
-    container.add(this.add.text(panelW - pad, 14, '[C] close', {
-      fontSize: '14px', fontFamily: 'monospace', color: '#554433',
-    }).setOrigin(1, 0));
+    const craftCloseBtn = this.add.text(panelW - pad, 10, '\u2715', {
+      fontSize: '20px', fontFamily: 'monospace', color: '#554433',
+    }).setOrigin(1, 0);
+    container.add(craftCloseBtn);
+    const craftCloseHit = this.add.rectangle(
+      startX + panelW - pad - 9, startY + 18, 26, 26, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(3106);
+    this.craftingElements.push(craftCloseHit);
+    craftCloseHit.on('pointerover', () => craftCloseBtn.setColor('#ff6644'));
+    craftCloseHit.on('pointerout', () => craftCloseBtn.setColor('#554433'));
+    craftCloseHit.on('pointerup', () => this.closeCrafting());
 
     // Drag handle
     let dragging = false;
@@ -1705,11 +2085,17 @@ export class HUDScene extends Phaser.Scene {
         fontSize: '18px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
       }).setOrigin(0.5, 0).setDepth(4510)
     );
-    this.researchElements.push(
-      this.add.text(cam.width - margin - 14, margin + 12, '[R] / [ESC] close', {
-        fontSize: '11px', fontFamily: 'monospace', color: '#443366',
-      }).setOrigin(1, 0).setDepth(4510)
-    );
+    const resCloseBtn = this.add.text(cam.width - margin - 14, margin + 8, '\u2715', {
+      fontSize: '20px', fontFamily: 'monospace', color: '#443366',
+    }).setOrigin(1, 0).setDepth(4510);
+    this.researchElements.push(resCloseBtn);
+    const resCloseHit = this.add.rectangle(
+      cam.width - margin - 14 - 9, margin + 18, 26, 26, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(4511);
+    this.researchElements.push(resCloseHit);
+    resCloseHit.on('pointerover', () => resCloseBtn.setColor('#ff6644'));
+    resCloseHit.on('pointerout', () => resCloseBtn.setColor('#443366'));
+    resCloseHit.on('pointerup', () => this.closeResearch());
 
     // Tier tabs
     const tiers = new Set();
