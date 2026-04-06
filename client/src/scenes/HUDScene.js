@@ -5,6 +5,28 @@ import Phaser from 'phaser';
 const ITEM_INFO = {};
 
 /**
+ * Create a close button (✕) with invisible hitbox and hover effect.
+ * @param {Phaser.Scene} scene
+ * @param {number} x - right edge x of the button (text is right-aligned)
+ * @param {number} y - top y of the button
+ * @param {string} color - default color hex string
+ * @param {number} depth - z-depth for the hitbox
+ * @param {Function} onClose - callback when clicked
+ * @returns {{ btn: Phaser.GameObjects.Text, hit: Phaser.GameObjects.Rectangle }}
+ */
+function createCloseButton(scene, x, y, color, depth, onClose) {
+  const btn = scene.add.text(x, y, '\u2715', {
+    fontSize: '18px', fontFamily: 'monospace', color,
+  }).setOrigin(1, 0).setDepth(depth);
+  const hit = scene.add.rectangle(x - 9, y + 8, 24, 24, 0x000000, 0)
+    .setInteractive({ useHandCursor: true }).setDepth(depth + 1);
+  hit.on('pointerover', () => btn.setColor('#ff6644'));
+  hit.on('pointerout', () => btn.setColor(color));
+  hit.on('pointerup', () => onClose());
+  return { btn, hit };
+}
+
+/**
  * Load item registry from server init data.
  * Called once on connect — populates ITEM_INFO, tile labels, crafting menu.
  */
@@ -706,17 +728,10 @@ export class HUDScene extends Phaser.Scene {
     }).setDepth(2001);
     this.machineUIElements.push(title);
 
-    const machCloseBtn = this.add.text(px + panelW - 12, py + 6, '\u2715', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#334466',
-    }).setOrigin(1, 0).setDepth(2001);
-    this.machineUIElements.push(machCloseBtn);
-    const machCloseHit = this.add.rectangle(
-      px + panelW - 12 - 9, py + 14, 24, 24, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(2002);
-    this.machineUIElements.push(machCloseHit);
-    machCloseHit.on('pointerover', () => machCloseBtn.setColor('#ff6644'));
-    machCloseHit.on('pointerout', () => machCloseBtn.setColor('#334466'));
-    machCloseHit.on('pointerup', () => this.closeMachineUI());
+    const { btn: machCloseBtn, hit: machCloseHit } = createCloseButton(
+      this, px + panelW - 12, py + 6, '#334466', 2001, () => this.closeMachineUI()
+    );
+    this.machineUIElements.push(machCloseBtn, machCloseHit);
 
     let yOff = py + 35;
 
@@ -845,17 +860,11 @@ export class HUDScene extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'monospace', color: '#cc8833', fontStyle: 'bold',
     }));
 
-    const closeBtn = this.add.text(panelW - pad, 6, '\u2715', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#664433',
-    }).setOrigin(1, 0);
-    container.add(closeBtn);
-    const closeBtnHit = this.add.rectangle(
-      startX + panelW - pad - 9, startY + 14, 24, 24, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(4006);
-    this.machineUIElements.push(closeBtnHit);
-    closeBtnHit.on('pointerover', () => closeBtn.setColor('#ff6644'));
-    closeBtnHit.on('pointerout', () => closeBtn.setColor('#664433'));
-    closeBtnHit.on('pointerup', () => this.closeMachineUI());
+    const { btn: chestCloseBtn, hit: chestCloseHit } = createCloseButton(
+      this, startX + panelW - pad, startY + 6, '#664433', 4005, () => this.closeMachineUI()
+    );
+    container.add(chestCloseBtn);
+    this.machineUIElements.push(chestCloseHit);
 
     // Drag title bar
     let dragging = false;
@@ -1049,17 +1058,11 @@ export class HUDScene extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
     }));
 
-    const invCloseBtn = this.add.text(panelW - pad, 5, '\u2715', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#335544',
-    }).setOrigin(1, 0);
+    const { btn: invCloseBtn, hit: invCloseHit } = createCloseButton(
+      this, startX + panelW - pad, startY + 5, '#335544', 3005, () => this.closeInventory()
+    );
     container.add(invCloseBtn);
-    const invCloseHit = this.add.rectangle(
-      startX + panelW - pad - 9, startY + 14, 24, 24, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(3006);
     this.inventoryElements.push(invCloseHit);
-    invCloseHit.on('pointerover', () => invCloseBtn.setColor('#ff6644'));
-    invCloseHit.on('pointerout', () => invCloseBtn.setColor('#335544'));
-    invCloseHit.on('pointerup', () => this.closeInventory());
 
     // Drag handle
     let dragging = false;
@@ -1289,17 +1292,11 @@ export class HUDScene extends Phaser.Scene {
       fontSize: '15px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
     }).setOrigin(0.5, 0));
 
-    const helpCloseBtn = this.add.text(panelW - 14, 8, '\u2715', {
-      fontSize: '18px', fontFamily: 'monospace', color: '#335544',
-    }).setOrigin(1, 0);
+    const { btn: helpCloseBtn, hit: helpCloseHit } = createCloseButton(
+      this, px + panelW - 14, py + 8, '#335544', 9001, () => this.closeHelp()
+    );
     container.add(helpCloseBtn);
-    const helpCloseHit = this.add.rectangle(
-      px + panelW - 14 - 9, py + 16, 24, 24, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(9002);
     this.helpElements.push(helpCloseHit);
-    helpCloseHit.on('pointerover', () => helpCloseBtn.setColor('#ff6644'));
-    helpCloseHit.on('pointerout', () => helpCloseBtn.setColor('#335544'));
-    helpCloseHit.on('pointerup', () => this.closeHelp());
 
     // Two-column layout
     const colL = 16;   // left column x
@@ -1426,17 +1423,11 @@ export class HUDScene extends Phaser.Scene {
     container.add(this.add.text(pad, 11, 'CRAFTING', {
       fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
     }));
-    const craftCloseBtn = this.add.text(panelW - pad, 10, '\u2715', {
-      fontSize: '20px', fontFamily: 'monospace', color: '#554433',
-    }).setOrigin(1, 0);
+    const { btn: craftCloseBtn, hit: craftCloseHit } = createCloseButton(
+      this, startX + panelW - pad, startY + 10, '#554433', 3105, () => this.closeCrafting()
+    );
     container.add(craftCloseBtn);
-    const craftCloseHit = this.add.rectangle(
-      startX + panelW - pad - 9, startY + 18, 26, 26, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(3106);
     this.craftingElements.push(craftCloseHit);
-    craftCloseHit.on('pointerover', () => craftCloseBtn.setColor('#ff6644'));
-    craftCloseHit.on('pointerout', () => craftCloseBtn.setColor('#554433'));
-    craftCloseHit.on('pointerup', () => this.closeCrafting());
 
     // Drag handle
     let dragging = false;
@@ -2085,17 +2076,10 @@ export class HUDScene extends Phaser.Scene {
         fontSize: '18px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
       }).setOrigin(0.5, 0).setDepth(4510)
     );
-    const resCloseBtn = this.add.text(cam.width - margin - 14, margin + 8, '\u2715', {
-      fontSize: '20px', fontFamily: 'monospace', color: '#443366',
-    }).setOrigin(1, 0).setDepth(4510);
-    this.researchElements.push(resCloseBtn);
-    const resCloseHit = this.add.rectangle(
-      cam.width - margin - 14 - 9, margin + 18, 26, 26, 0x000000, 0
-    ).setInteractive({ useHandCursor: true }).setDepth(4511);
-    this.researchElements.push(resCloseHit);
-    resCloseHit.on('pointerover', () => resCloseBtn.setColor('#ff6644'));
-    resCloseHit.on('pointerout', () => resCloseBtn.setColor('#443366'));
-    resCloseHit.on('pointerup', () => this.closeResearch());
+    const { btn: resCloseBtn, hit: resCloseHit } = createCloseButton(
+      this, cam.width - margin - 14, margin + 8, '#443366', 4510, () => this.closeResearch()
+    );
+    this.researchElements.push(resCloseBtn, resCloseHit);
 
     // Tier tabs
     const tiers = new Set();
