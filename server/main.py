@@ -668,6 +668,24 @@ async def websocket_endpoint(ws: WebSocket):
                 building_owners[(wx, wy, wz)] = {"user_id": user_id, "original_tile": original_tile}
                 db.save_building_owner(wx, wy, user_id, original_tile, wz)
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": tile_id})
+                # Auto-pair stairs: place matching stair on adjacent layer
+                if tile_id == STAIRS_DOWN:
+                    pair_z = wz - 1
+                    pair_tile = STAIRS_UP
+                elif tile_id == STAIRS_UP:
+                    pair_z = wz + 1
+                    pair_tile = STAIRS_DOWN
+                else:
+                    pair_z = None
+                if pair_z is not None and MIN_Z <= pair_z <= 0:
+                    dest_tile = world.get_tile(wx, wy, pair_z)
+                    if dest_tile not in SOLID_TILES and dest_tile < 100:
+                        pair_orig = world.get_tile(wx, wy, pair_z)
+                        world.set_tile(wx, wy, pair_tile, pair_z)
+                        db.save_world_mod(wx, wy, pair_tile, pair_z)
+                        building_owners[(wx, wy, pair_z)] = {"user_id": user_id, "original_tile": pair_orig}
+                        db.save_building_owner(wx, wy, user_id, pair_orig, pair_z)
+                        await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": pair_z, "tile": pair_tile})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": item_name, "wx": wx, "wy": wy})
 
@@ -704,6 +722,20 @@ async def websocket_endpoint(ws: WebSocket):
                 building_owners.pop((wx, wy, wz), None)
                 db.delete_building_owner(wx, wy, wz)
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": restore_tile})
+                # Auto-remove paired stair on adjacent layer
+                if tile in (STAIRS_DOWN, STAIRS_UP):
+                    pair_z = wz - 1 if tile == STAIRS_DOWN else wz + 1
+                    if MIN_Z <= pair_z <= 0:
+                        pair_tile = world.get_tile(wx, wy, pair_z)
+                        expected = STAIRS_UP if tile == STAIRS_DOWN else STAIRS_DOWN
+                        if pair_tile == expected:
+                            pair_bdata = building_owners.get((wx, wy, pair_z))
+                            pair_restore = pair_bdata.get("original_tile", DIRT) if pair_bdata else DIRT
+                            world._modifications.pop((wx, wy, pair_z), None)
+                            db.delete_world_mod(wx, wy, pair_z)
+                            building_owners.pop((wx, wy, pair_z), None)
+                            db.delete_building_owner(wx, wy, pair_z)
+                            await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": pair_z, "tile": pair_restore})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": "removed", "wx": wx, "wy": wy})
 
