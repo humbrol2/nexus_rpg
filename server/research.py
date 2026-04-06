@@ -42,6 +42,16 @@ RESEARCH_TREE: dict[str, dict] = {
         "unlocks": ["claim_flag"],
     },
 
+    "underground": {
+        "name": "Underground Access",
+        "desc": "Unlock stairs to descend into caves and return to the surface.",
+        "tier": 1, "row": 4, "col": 0,
+        "cost": {"stone": 15, "wood": 10},
+        "time": 20,
+        "prereqs": ["stone_tools"],
+        "unlocks": ["stairs_down", "stairs_up"],
+    },
+
     # Tier 2 — requires stone tools
     "smelting": {
         "name": "Smelting",

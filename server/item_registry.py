@@ -151,8 +151,8 @@ HAND_RECIPES = {
     "copper_chest":  {"cost": {"copper_plate": 10}, "qty": 1, "research": "smelting"},
     "iron_chest":    {"cost": {"iron_plate": 12}, "qty": 1, "research": "smelting"},
     "stone_furnace": {"cost": {"stone": 15}, "qty": 1, "research": "smelting"},
-    "stairs_down":   {"cost": {"stone": 5, "wood": 3}, "qty": 1},
-    "stairs_up":     {"cost": {"stone": 5, "wood": 3}, "qty": 1},
+    "stairs_down":   {"cost": {"stone": 5, "wood": 3}, "qty": 1, "research": "underground"},
+    "stairs_up":     {"cost": {"stone": 5, "wood": 3}, "qty": 1, "research": "underground"},
 }
 
 # ══════════════════════════════════════════════════════════════════
