@@ -1569,11 +1569,11 @@ export class HUDScene extends Phaser.Scene {
         }).setOrigin(0.5, 0));
       }
 
-      // Click zone
+      // Click zone (no hand cursor if locked)
       const clickZone = this.add.rectangle(
         startX + cx + cellSize / 2, startY + cy + cellSize / 2,
         cellSize, cellSize, 0x000000, 0
-      ).setInteractive({ useHandCursor: true }).setDepth(3103);
+      ).setInteractive({ useHandCursor: researched }).setDepth(3103);
       this.craftingElements.push(clickZone);
 
       const capturedItem = { ...item };
