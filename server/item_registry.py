@@ -41,6 +41,8 @@ TILES = {
     100: {"name": "wall",       "label": "Stone Wall",   "solid": True,  "speed": 1.0, "color": [72,72,82]},
     101: {"name": "floor",      "label": "Stone Path",   "solid": False, "speed": 1.15,"color": [100,100,110]},
     102: {"name": "sign",       "label": "Sign",         "solid": False, "speed": 1.0, "color": [140,110,60]},
+    103: {"name": "stairs_down","label": "Stairs Down",  "solid": False, "speed": 1.0, "color": [80,60,40]},
+    104: {"name": "stairs_up",  "label": "Stairs Up",    "solid": False, "speed": 1.0, "color": [80,60,40]},
     # Machines
     200: {"name": "miner",        "label": "Auto-Miner",   "solid": True,  "speed": 1.0, "color": [204,136,51]},
     201: {"name": "fabricator",   "label": "Fabricator",    "solid": True,  "speed": 1.0, "color": [102,136,204]},
@@ -111,6 +113,14 @@ ITEMS = {
         "label": "Sign", "color": "#8c6e3c", "category": "placeable",
         "placeable": {"build_key": "sign", "tile_id": 102, "passable": True, "has_text": True},
     },
+    "stairs_down": {
+        "label": "Stairs Down", "color": "#503c28", "category": "placeable",
+        "placeable": {"build_key": "stairs_down", "tile_id": 103, "passable": True},
+    },
+    "stairs_up": {
+        "label": "Stairs Up", "color": "#503c28", "category": "placeable",
+        "placeable": {"build_key": "stairs_up", "tile_id": 104, "passable": True},
+    },
     # Chests (crafted items — placed via machine system)
     "wood_chest":   {"label": "Wood Chest",   "color": "#8b6b3a", "category": "machine_item", "machine_type": 204},
     "stone_chest":  {"label": "Stone Chest",  "color": "#5f5f5a", "category": "machine_item", "machine_type": 205},
@@ -141,6 +151,8 @@ HAND_RECIPES = {
     "copper_chest":  {"cost": {"copper_plate": 10}, "qty": 1, "research": "smelting"},
     "iron_chest":    {"cost": {"iron_plate": 12}, "qty": 1, "research": "smelting"},
     "stone_furnace": {"cost": {"stone": 15}, "qty": 1, "research": "smelting"},
+    "stairs_down":   {"cost": {"stone": 5, "wood": 3}, "qty": 1},
+    "stairs_up":     {"cost": {"stone": 5, "wood": 3}, "qty": 1},
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -215,6 +227,8 @@ CRAFTING_MENU = [
             {"name": "Stone Path",  "craft_id": "stone_path",  "cost": {"stone": 1}, "note": "+15% speed"},
             {"name": "Sign",        "craft_id": "sign",        "cost": {"wood": 2},  "note": "Place text in world"},
             {"name": "Claim Flag", "craft_id": "claim_flag",  "cost": {"wood": 10, "stone": 10}, "note": "Claim 25x25 land"},
+            {"name": "Stairs Down", "craft_id": "stairs_down", "cost": {"stone": 5, "wood": 3}, "note": "Descend one layer"},
+            {"name": "Stairs Up",   "craft_id": "stairs_up",   "cost": {"stone": 5, "wood": 3}, "note": "Ascend one layer"},
         ],
     },
     {

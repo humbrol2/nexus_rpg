@@ -458,6 +458,68 @@ function paintMachine(ctx, x, y, rng, color, symbol) {
   ctx.fillText(symbol, x + T / 2, y + T / 2 + 1);
 }
 
+function paintStairsDown(ctx, x, y, rng) {
+  // Stone base
+  const base = { r: 70, g: 65, b: 58 };
+  for (let py = 0; py < T; py++) {
+    for (let px = 0; px < T; px++) {
+      ctx.fillStyle = rgbStr(vary(rng, base.r, 8), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      ctx.fillRect(x + px, y + py, 1, 1);
+    }
+  }
+  // Steps descending (darker toward bottom = going down)
+  const steps = 5;
+  const stepH = Math.floor(T / steps);
+  for (let i = 0; i < steps; i++) {
+    const shade = 80 - i * 12;
+    const sy = y + i * stepH;
+    const indent = i * 2;
+    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 10);
+    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - 1);
+    // Step edge highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + indent, sy, T - indent * 2, 1);
+    // Step shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(x + indent, sy + stepH - 1, T - indent * 2, 1);
+  }
+  // Down arrow
+  ctx.fillStyle = 'rgba(255,200,80,0.7)';
+  ctx.fillRect(x + 14, y + 4, 4, 6);
+  ctx.fillRect(x + 12, y + 10, 8, 2);
+  ctx.fillRect(x + 14, y + 12, 4, 2);
+}
+
+function paintStairsUp(ctx, x, y, rng) {
+  // Stone base
+  const base = { r: 70, g: 65, b: 58 };
+  for (let py = 0; py < T; py++) {
+    for (let px = 0; px < T; px++) {
+      ctx.fillStyle = rgbStr(vary(rng, base.r, 8), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      ctx.fillRect(x + px, y + py, 1, 1);
+    }
+  }
+  // Steps ascending (lighter toward bottom = going up)
+  const steps = 5;
+  const stepH = Math.floor(T / steps);
+  for (let i = 0; i < steps; i++) {
+    const shade = 40 + i * 12;
+    const sy = y + i * stepH;
+    const indent = (steps - 1 - i) * 2;
+    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 10);
+    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(x + indent, sy, T - indent * 2, 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(x + indent, sy + stepH - 1, T - indent * 2, 1);
+  }
+  // Up arrow
+  ctx.fillStyle = 'rgba(80,220,255,0.7)';
+  ctx.fillRect(x + 14, y + 8, 4, 6);
+  ctx.fillRect(x + 12, y + 6, 8, 2);
+  ctx.fillRect(x + 14, y + 4, 4, 2);
+}
+
 // ── Main generator ──
 
 export function generateTileset(scene) {
@@ -491,7 +553,7 @@ export function generateTileset(scene) {
 
   // Add extra machine tiles by extending canvas
   const canvas2 = document.createElement('canvas');
-  canvas2.width = T * (tileCount + 11); // +storage, furnace, 4 chests, 5 underground
+  canvas2.width = T * (tileCount + 13); // +storage, furnace, 4 chests, 5 underground, 2 stairs
   canvas2.height = T;
   const ctx2 = canvas2.getContext('2d');
   ctx2.drawImage(canvas, 0, 0);
@@ -511,6 +573,9 @@ export function generateTileset(scene) {
   paintOre(ctx2, 25 * T, 0, mulberry32(2200), 0xa06437);        // deep_iron
   paintOre(ctx2, 26 * T, 0, mulberry32(2300), 0xbe7d37);        // deep_copper
   paintCrystal(ctx2, 27 * T, 0, mulberry32(2400), 0xa0dcff);    // rare_crystal
+  // Stairs (index 28-29 -> 103-104)
+  paintStairsDown(ctx2, 28 * T, 0, mulberry32(2500));
+  paintStairsUp(ctx2, 29 * T, 0, mulberry32(2600));
 
   // Register as Phaser texture
   if (scene.textures.exists('tileset')) {
@@ -526,7 +591,7 @@ const TILE_INDEX_MAP = {
   0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
   7: 7, 8: 8, 9: 9, 10: 10, 11: 11,
   12: 23, 13: 24, 14: 25, 15: 26, 16: 27, // underground tiles
-  100: 12, 101: 13, 102: 14,
+  100: 12, 101: 13, 102: 14, 103: 28, 104: 29,
   200: 15, 201: 16, 202: 17, 203: 18,
   204: 19, 205: 20, 206: 21, 207: 22,
 };

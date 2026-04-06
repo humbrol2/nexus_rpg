@@ -1325,7 +1325,6 @@ export class HUDScene extends Phaser.Scene {
     yL = addRow(colL, yL, 'R', 'Research');
     yL = addRow(colL, yL, 'M / TAB', 'World map');
     yL = addRow(colL, yL, 'H', 'Help (this)');
-    yL = addRow(colL, yL, 'V', 'Toggle underground');
     yL += 4;
     yL = addSection(colL, yL, 'ACTIONS');
     yL = addRow(colL, yL, 'L-Click', 'Mine / place / interact');
@@ -1346,6 +1345,11 @@ export class HUDScene extends Phaser.Scene {
     yR = addRow(colR, yR, '`  (backtick)', 'Open chat');
     yR = addRow(colR, yR, 'Enter', 'Send message');
     yR = addRow(colR, yR, 'Escape', 'Close chat');
+    yR += 4;
+    yR = addSection(colR, yR, 'UNDERGROUND');
+    yR = addRow(colR, yR, 'Stairs Down', 'Craft & place to descend');
+    yR = addRow(colR, yR, 'Stairs Up', 'Craft & place to ascend');
+    yR = addRow(colR, yR, 'Click stair', 'Use while standing on it');
 
     // Click anywhere to close
     const closeHit = this.add.rectangle(

@@ -109,7 +109,6 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-G', () => this._withdrawFromMachine()); // G for grab
     this.input.keyboard.on('keydown-Q', () => this.hud.closeMachineUI());
     this.input.keyboard.on('keydown-H', () => this.hud.toggleHelp());
-    this.input.keyboard.on('keydown-V', () => this._toggleZLevel());
 
     // Backtick to open chat
     this.input.keyboard.on('keydown', (e) => {
@@ -141,13 +140,6 @@ export class GameScene extends Phaser.Scene {
     this.socket = new GameSocket();
     this._setupSocketHandlers();
     this.socket.connect();
-  }
-
-  _toggleZLevel() {
-    // Cycle: 0 → -1 → 0 (more levels added later)
-    const newZ = this.currentZ === 0 ? -1 : 0;
-    // Tell server we want to change Z
-    this.socket.send({ type: 'change_z', direction: newZ < this.currentZ ? -1 : 1 });
   }
 
   _handleZChange(newZ) {
@@ -284,7 +276,7 @@ export class GameScene extends Phaser.Scene {
       if (tile >= 200) {
         // Right-click machine/chest = pick up
         this.socket.send({ type: 'remove_machine', wx, wy });
-      } else if (tile === 100 || tile === 101 || tile === 102) {
+      } else if (tile === 100 || tile === 101 || tile === 102 || tile === 103 || tile === 104) {
         this.socket.send({ type: 'remove_building', wx, wy });
       }
       return;
@@ -298,6 +290,16 @@ export class GameScene extends Phaser.Scene {
     // Left-click on machine/chest = open inventory UI
     if (tile >= 200) {
       this.socket.send({ type: 'interact_machine', wx, wy });
+      return;
+    }
+
+    // Stairs — must be standing on the stair tile to use it
+    if (tile === 103 && wx === ptx && wy === pty) {
+      this.socket.send({ type: 'change_z', direction: -1 });
+      return;
+    }
+    if (tile === 104 && wx === ptx && wy === pty) {
+      this.socket.send({ type: 'change_z', direction: 1 });
       return;
     }
 
@@ -613,7 +615,14 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.socket.on('error', (msg) => {
-      const reasons = { cannot_go_there: "Can't go there" };
+      const reasons = {
+        cannot_go_there: "Can't go there",
+        need_stairs_down: 'Stand on stairs down to descend',
+        need_stairs_up: 'Stand on stairs up to ascend',
+        blocked_above: 'Blocked above',
+        too_deep: "Can't place stairs down here",
+        already_surface: "Can't place stairs up on surface",
+      };
       hud.showToast(reasons[msg.reason] || msg.reason);
     });
 
@@ -699,7 +708,7 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.socket.on('build_success', (msg) => {
-      const names = { wall: 'Stone Wall', floor: 'Stone Path', sign: 'Sign', removed: 'Removed' };
+      const names = { wall: 'Stone Wall', floor: 'Stone Path', sign: 'Sign', stairs_down: 'Stairs Down', stairs_up: 'Stairs Up', removed: 'Removed' };
       hud.showToast(`Built ${names[msg.item] || msg.item}`);
 
       // Prompt for sign text after placing
@@ -718,6 +727,8 @@ export class GameScene extends Phaser.Scene {
         claimed_land: 'Claimed by another player',
         already_claimed: 'This area is already claimed',
         claim_limit: 'Claim limit reached (max 5)',
+        too_deep: "Can't go deeper — bottom layer",
+        already_surface: "Already on surface",
         unknown_item: 'Unknown item', unknown_machine: 'Unknown machine', occupied: 'Already occupied',
       };
       hud.showToast(reasons[msg.reason] || 'Build failed');

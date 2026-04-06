@@ -17,6 +17,9 @@ from pydantic import BaseModel
 
 from world import WorldGenerator, CHUNK_SIZE, SOLID_TILES, DIRT, WALL, FLOOR, RESPAWN_TIMES
 SIGN = 102
+STAIRS_DOWN = 103
+STAIRS_UP = 104
+MIN_Z = -3  # deepest allowed layer (expandable)
 from item_registry import (
     TILES, ITEMS, MINABLE, BUILDABLE, HAND_RECIPES, MACHINES,
     MACHINE_RECIPES, CRAFTING_MENU, ANIMALS, get_client_registry,
@@ -650,6 +653,13 @@ async def websocket_endpoint(ws: WebSocket):
                 if current_tile in SOLID_TILES or current_tile >= 100:
                     await send_json(ws, {"type": "build_fail", "reason": "blocked"})
                     continue
+                # Stair placement validation
+                if tile_id == STAIRS_DOWN and wz <= MIN_Z:
+                    await send_json(ws, {"type": "build_fail", "reason": "too_deep"})
+                    continue
+                if tile_id == STAIRS_UP and wz >= 0:
+                    await send_json(ws, {"type": "build_fail", "reason": "already_surface"})
+                    continue
 
                 original_tile = world.get_tile(wx, wy, wz)
                 player.remove_items(cost)
@@ -667,7 +677,7 @@ async def websocket_endpoint(ws: WebSocket):
                 tile = world.get_tile(wx, wy, wz)
                 bdata = building_owners.get((wx, wy, wz))
 
-                removable = {WALL, FLOOR, SIGN}
+                removable = {WALL, FLOOR, SIGN, STAIRS_DOWN, STAIRS_UP}
                 if tile not in removable:
                     await send_json(ws, {"type": "build_fail", "reason": "not_a_building"})
                     continue
@@ -676,7 +686,10 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
 
                 # Return crafted item
-                TILE_TO_ITEM = {WALL: "stone_wall", FLOOR: "stone_path", SIGN: "sign"}
+                TILE_TO_ITEM = {
+                    WALL: "stone_wall", FLOOR: "stone_path", SIGN: "sign",
+                    STAIRS_DOWN: "stairs_down", STAIRS_UP: "stairs_up",
+                }
                 refund_item = TILE_TO_ITEM.get(tile)
                 if refund_item:
                     player.add_item(refund_item, 1)
@@ -972,16 +985,23 @@ async def websocket_endpoint(ws: WebSocket):
                 direction = msg["direction"]
                 if direction not in (-1, 1):
                     continue
-                new_z = player.z + direction
-                # For now, allow Z=0 (surface) and Z=-1 (underground)
-                if new_z < -1 or new_z > 0:
-                    await send_json(ws, {"type": "error", "reason": "cannot_go_there"})
-                    continue
-                # Don't allow Z change if destination tile is solid (e.g. surfacing into water)
+                # Must be standing on the correct stair tile
                 ptx = int(player.x // 32)
                 pty = int(player.y // 32)
-                if world.is_solid(ptx, pty, new_z):
+                current_tile = world.get_tile(ptx, pty, player.z)
+                if direction == -1 and current_tile != STAIRS_DOWN:
+                    await send_json(ws, {"type": "error", "reason": "need_stairs_down"})
+                    continue
+                if direction == 1 and current_tile != STAIRS_UP:
+                    await send_json(ws, {"type": "error", "reason": "need_stairs_up"})
+                    continue
+                new_z = player.z + direction
+                if new_z < MIN_Z or new_z > 0:
                     await send_json(ws, {"type": "error", "reason": "cannot_go_there"})
+                    continue
+                # Don't allow Z change if destination tile is solid
+                if world.is_solid(ptx, pty, new_z):
+                    await send_json(ws, {"type": "error", "reason": "blocked_above"})
                     continue
                 player.z = new_z
                 await send_json(ws, {"type": "z_changed", "z": player.z})
