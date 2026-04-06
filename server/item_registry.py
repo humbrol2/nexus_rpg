@@ -227,8 +227,8 @@ CRAFTING_MENU = [
             {"name": "Stone Path",  "craft_id": "stone_path",  "cost": {"stone": 1}, "note": "+15% speed"},
             {"name": "Sign",        "craft_id": "sign",        "cost": {"wood": 2},  "note": "Place text in world"},
             {"name": "Claim Flag", "craft_id": "claim_flag",  "cost": {"wood": 10, "stone": 10}, "note": "Claim 25x25 land"},
-            {"name": "Stairs Down", "craft_id": "stairs_down", "cost": {"stone": 5, "wood": 3}, "note": "Descend one layer"},
-            {"name": "Stairs Up",   "craft_id": "stairs_up",   "cost": {"stone": 5, "wood": 3}, "note": "Ascend one layer"},
+            {"name": "Stairs Down", "craft_id": "stairs_down", "cost": {"stone": 5, "wood": 3}, "note": "Descend one layer (Research: Underground)"},
+            {"name": "Stairs Up",   "craft_id": "stairs_up",   "cost": {"stone": 5, "wood": 3}, "note": "Ascend one layer (Research: Underground)"},
         ],
     },
     {
