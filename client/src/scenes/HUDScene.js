@@ -1511,7 +1511,9 @@ export class HUDScene extends Phaser.Scene {
       const cx = pad + col * (cellSize + cellPad);
       const cy = titleBarH + tabBarH + pad + row * (cellSize + cellPad);
 
-      const canCraft = Object.entries(item.cost).every(
+      const researched = !item.research ||
+        (this.researchState.completed || []).includes(item.research);
+      const canCraft = researched && Object.entries(item.cost).every(
         ([k, v]) => (this.inventory[k] || 0) >= v
       );
 
@@ -1519,30 +1521,45 @@ export class HUDScene extends Phaser.Scene {
       const cell = this.add.graphics();
       cell.fillStyle(canCraft ? 0x1a2a1a : 0x111115, 1);
       cell.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
-      cell.lineStyle(1, canCraft ? 0x33aa44 : 0x222233, canCraft ? 0.5 : 0.3);
+      cell.lineStyle(1, canCraft ? 0x33aa44 : researched ? 0x222233 : 0x442222, canCraft ? 0.5 : 0.3);
       cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 6);
       container.add(cell);
+
+      // Locked overlay
+      if (!researched) {
+        const lock = this.add.graphics();
+        lock.fillStyle(0x000000, 0.4);
+        lock.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
+        container.add(lock);
+      }
 
       // Item name (centered, top)
       container.add(this.add.text(cx + cellSize / 2, cy + 8, item.name, {
         fontSize: '12px', fontFamily: 'monospace', fontStyle: 'bold',
-        color: canCraft ? '#ddddee' : '#556666',
+        color: !researched ? '#443333' : canCraft ? '#ddddee' : '#556666',
         wordWrap: { width: cellSize - 10 }, align: 'center',
       }).setOrigin(0.5, 0));
 
-      // Cost (centered, middle)
-      const costStr = Object.entries(item.cost).map(([k, v]) => {
-        const have = this.inventory[k] || 0;
-        return `${(ITEM_INFO[k]?.label || k).slice(0, 6)}:${have}/${v}`;
-      }).join('\n');
-      container.add(this.add.text(cx + cellSize / 2, cy + 45, costStr, {
-        fontSize: '9px', fontFamily: 'monospace',
-        color: canCraft ? '#66aa77' : '#553333',
-        align: 'center', lineSpacing: 2,
-      }).setOrigin(0.5, 0));
+      // Cost or locked label (centered, middle)
+      if (!researched) {
+        container.add(this.add.text(cx + cellSize / 2, cy + 45, `Locked\nResearch: ${item.research}`, {
+          fontSize: '9px', fontFamily: 'monospace',
+          color: '#884444', align: 'center', lineSpacing: 2,
+        }).setOrigin(0.5, 0));
+      } else {
+        const costStr = Object.entries(item.cost).map(([k, v]) => {
+          const have = this.inventory[k] || 0;
+          return `${(ITEM_INFO[k]?.label || k).slice(0, 6)}:${have}/${v}`;
+        }).join('\n');
+        container.add(this.add.text(cx + cellSize / 2, cy + 45, costStr, {
+          fontSize: '9px', fontFamily: 'monospace',
+          color: canCraft ? '#66aa77' : '#553333',
+          align: 'center', lineSpacing: 2,
+        }).setOrigin(0.5, 0));
+      }
 
       // Note or machine tag (bottom)
-      if (item.note) {
+      if (item.note && researched) {
         container.add(this.add.text(cx + cellSize / 2, cy + cellSize - 18, item.note, {
           fontSize: '9px', fontFamily: 'monospace', color: '#667755',
         }).setOrigin(0.5, 0));
@@ -1560,7 +1577,12 @@ export class HUDScene extends Phaser.Scene {
       this.craftingElements.push(clickZone);
 
       const capturedItem = { ...item };
+      const capturedResearched = researched;
       clickZone.on('pointerdown', () => {
+        if (!capturedResearched) {
+          this.showToast(`Requires research: ${capturedItem.research}`);
+          return;
+        }
         this._showCraftDetail(capturedItem);
       });
     });
