@@ -111,6 +111,19 @@ export class HUDScene extends Phaser.Scene {
     this.craftDetailOpen = false;
     this.craftDetailElements = [];
 
+    // Health
+    this._hp = 100;
+    this._maxHp = 100;
+    this._hpBar = null;
+    this._hpText = null;
+
+    // Character sheet
+    this.charSheetOpen = false;
+    this.charSheetElements = [];
+
+    // Death overlay
+    this._deathElements = [];
+
     // World map
     this.worldMapOpen = false;
     this.worldMapElements = [];
@@ -177,6 +190,14 @@ export class HUDScene extends Phaser.Scene {
       backgroundColor: '#000000aa',
       padding: { x: 10, y: 4 },
     }).setOrigin(0.5, 0).setDepth(1001).setVisible(false);
+    // Health bar (top-left, always visible)
+    this._hpBarBg = this.add.graphics().setDepth(1002);
+    this._hpBarFg = this.add.graphics().setDepth(1003);
+    this._hpText = this.add.text(12, 8, 'HP: 100/100', {
+      fontSize: '11px', fontFamily: 'monospace', color: '#ff4444', fontStyle: 'bold',
+    }).setDepth(1004);
+    this._drawHPBar();
+
     this.hintText = this.add.text(10, cam.height - 24,
       'Press H for help  |  ` for chat', {
         fontSize: '11px', fontFamily: 'monospace',
@@ -683,6 +704,194 @@ export class HUDScene extends Phaser.Scene {
       this._zLevelText.setText(z === 0 ? '' : `UNDERGROUND ${z}`);
       this._zLevelText.setVisible(z !== 0);
     }
+  }
+
+  // ── Health Bar ──
+
+  updateHP(hp, maxHp) {
+    const oldHp = this._hp;
+    this._hp = hp;
+    this._maxHp = maxHp;
+    this._drawHPBar();
+    // Flash red on damage
+    if (hp < oldHp && this._hpBarFg) {
+      this.tweens.add({
+        targets: this._hpBarFg, alpha: 0.3, duration: 100, yoyo: true, repeat: 2,
+      });
+    }
+  }
+
+  _drawHPBar() {
+    const barW = 140, barH = 14, x = 10, y = 24;
+    const pct = Math.max(0, this._hp / this._maxHp);
+    // Background
+    if (this._hpBarBg) {
+      this._hpBarBg.clear();
+      this._hpBarBg.fillStyle(0x000000, 0.6);
+      this._hpBarBg.fillRoundedRect(x, y, barW, barH, 3);
+    }
+    // Foreground
+    if (this._hpBarFg) {
+      this._hpBarFg.clear();
+      const color = pct > 0.5 ? 0x33cc44 : pct > 0.25 ? 0xccaa22 : 0xcc3333;
+      this._hpBarFg.fillStyle(color, 0.9);
+      this._hpBarFg.fillRoundedRect(x + 1, y + 1, (barW - 2) * pct, barH - 2, 2);
+    }
+    // Text
+    if (this._hpText) {
+      this._hpText.setText(`HP: ${this._hp}/${this._maxHp}`);
+    }
+  }
+
+  // ── Death Overlay ──
+
+  showDeathOverlay(onRespawn) {
+    this.hideDeathOverlay();
+    const cam = this.cameras.main;
+
+    const dim = this.add.graphics().setDepth(10000);
+    dim.fillStyle(0x220000, 0.8);
+    dim.fillRect(0, 0, cam.width, cam.height);
+    this._deathElements.push(dim);
+
+    this._deathElements.push(this.add.text(cam.width / 2, cam.height / 2 - 40, 'YOU DIED', {
+      fontSize: '48px', fontFamily: 'monospace', color: '#ff2222', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(10001));
+
+    const timerText = this.add.text(cam.width / 2, cam.height / 2 + 20, 'Respawning in 3...', {
+      fontSize: '16px', fontFamily: 'monospace', color: '#cc6666',
+    }).setOrigin(0.5).setDepth(10001);
+    this._deathElements.push(timerText);
+
+    let countdown = 3;
+    const timer = this.time.addEvent({
+      delay: 1000, repeat: 2,
+      callback: () => {
+        countdown--;
+        if (countdown > 0) {
+          timerText.setText(`Respawning in ${countdown}...`);
+        } else {
+          timerText.setText('Respawning...');
+          if (onRespawn) onRespawn();
+        }
+      },
+    });
+    this._deathTimer = timer;
+  }
+
+  hideDeathOverlay() {
+    if (this._deathTimer) {
+      this._deathTimer.remove(false);
+      this._deathTimer = null;
+    }
+    for (const el of this._deathElements) el.destroy();
+    this._deathElements = [];
+  }
+
+  // ── Character Sheet ──
+
+  toggleCharSheet(gameScene) {
+    if (this.charSheetOpen) {
+      this.closeCharSheet();
+    } else {
+      this.showCharSheet(gameScene);
+    }
+  }
+
+  showCharSheet(gs) {
+    this.closeCharSheet();
+    this.charSheetOpen = true;
+
+    const cam = this.cameras.main;
+    const panelW = 280;
+    const panelH = 220;
+    const startX = this._charSheetPosX ?? (cam.width - panelW) / 2;
+    const startY = this._charSheetPosY ?? (cam.height - panelH) / 2;
+
+    const container = this.add.container(startX, startY).setDepth(5000);
+    this.charSheetElements.push(container);
+
+    // Background
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d1117, 0.95);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 8);
+    bg.lineStyle(1, 0x44aaff, 0.35);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 8);
+    container.add(bg);
+
+    // Title bar
+    const titleBar = this.add.graphics();
+    titleBar.fillStyle(0x0a1520, 1);
+    titleBar.fillRoundedRect(0, 0, panelW, 32, { tl: 8, tr: 8, bl: 0, br: 0 });
+    container.add(titleBar);
+
+    container.add(this.add.text(12, 8, 'CHARACTER', {
+      fontSize: '14px', fontFamily: 'monospace', color: '#44aaff', fontStyle: 'bold',
+    }));
+
+    const { btn: closeBtn, hit: closeHit } = createCloseButton(
+      this, startX + panelW - 12, startY + 6, '#335566', 5001, () => this.closeCharSheet()
+    );
+    container.add(closeBtn);
+    this.charSheetElements.push(closeHit);
+
+    // Drag
+    let dragging = false, dragOffX = 0, dragOffY = 0;
+    const dragHit = this.add.rectangle(
+      startX + panelW / 2, startY + 16, panelW, 32, 0x000000, 0
+    ).setInteractive({ useHandCursor: true }).setDepth(5002);
+    this.charSheetElements.push(dragHit);
+    dragHit.on('pointerdown', (p) => { dragging = true; dragOffX = p.x - container.x; dragOffY = p.y - container.y; });
+    const onMove = (p) => {
+      if (!dragging) return;
+      container.x = p.x - dragOffX; container.y = p.y - dragOffY;
+      dragHit.x = container.x + panelW / 2; dragHit.y = container.y + 16;
+      this._charSheetPosX = container.x; this._charSheetPosY = container.y;
+    };
+    const onUp = () => { dragging = false; };
+    this.input.on('pointermove', onMove);
+    this.input.on('pointerup', onUp);
+    this._charSheetDragCleanup = () => { this.input.off('pointermove', onMove); this.input.off('pointerup', onUp); };
+
+    // Stats
+    const ls = { fontSize: '11px', fontFamily: 'monospace', color: '#88aacc' };
+    const vs = { fontSize: '11px', fontFamily: 'monospace', color: '#ddddee' };
+    const pad = 14;
+    let y = 42;
+    const addStat = (label, value) => {
+      container.add(this.add.text(pad, y, label, ls));
+      container.add(this.add.text(panelW - pad, y, String(value), vs).setOrigin(1, 0));
+      y += 18;
+    };
+
+    addStat('Name', gs.playerName || 'Unknown');
+    // HP bar inline
+    const hpPct = gs.maxHp > 0 ? gs.hp / gs.maxHp : 0;
+    const hpBarW = 120;
+    const hpBar = this.add.graphics();
+    hpBar.fillStyle(0x000000, 0.4);
+    hpBar.fillRoundedRect(panelW - pad - hpBarW, y + 2, hpBarW, 10, 2);
+    const hpColor = hpPct > 0.5 ? 0x33cc44 : hpPct > 0.25 ? 0xccaa22 : 0xcc3333;
+    hpBar.fillStyle(hpColor, 0.9);
+    hpBar.fillRoundedRect(panelW - pad - hpBarW + 1, y + 3, (hpBarW - 2) * hpPct, 8, 2);
+    container.add(hpBar);
+    container.add(this.add.text(pad, y, 'HP', ls));
+    container.add(this.add.text(panelW - pad - hpBarW - 6, y, `${gs.hp}/${gs.maxHp}`, vs).setOrigin(1, 0));
+    y += 18;
+
+    addStat('Speed', `${gs.speed} px/s`);
+    addStat('Layer', gs.currentZ === 0 ? 'Surface' : `Underground ${gs.currentZ}`);
+    const itemCount = Object.values(gs.inventory || {}).reduce((a, b) => a + b, 0);
+    const itemTypes = Object.keys(gs.inventory || {}).length;
+    addStat('Inventory', `${itemCount} items (${itemTypes} types)`);
+    addStat('Position', `${Math.floor(gs.myPlayer?.x / 32)}, ${Math.floor(gs.myPlayer?.y / 32)}`);
+  }
+
+  closeCharSheet() {
+    this.charSheetOpen = false;
+    if (this._charSheetDragCleanup) { this._charSheetDragCleanup(); this._charSheetDragCleanup = null; }
+    for (const el of this.charSheetElements) el.destroy();
+    this.charSheetElements = [];
   }
 
   hideStatus() {
@@ -1325,6 +1534,7 @@ export class HUDScene extends Phaser.Scene {
     yL = addRow(colL, yL, 'R', 'Research');
     yL = addRow(colL, yL, 'M / TAB', 'World map');
     yL = addRow(colL, yL, 'H', 'Help (this)');
+    yL = addRow(colL, yL, 'K', 'Character sheet');
     yL += 4;
     yL = addSection(colL, yL, 'ACTIONS');
     yL = addRow(colL, yL, 'L-Click', 'Mine / place / interact');

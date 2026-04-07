@@ -51,6 +51,9 @@ export class GameScene extends Phaser.Scene {
     this.currentZ = 0;
     this.nameTexts = {};
     this.inventory = {};
+    this.hp = 100;
+    this.maxHp = 100;
+    this.isDead = false;
     this.isMining = false;
     this.mineTarget = null;
     this.mineProgress = 0;
@@ -109,6 +112,7 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-G', () => this._withdrawFromMachine()); // G for grab
     this.input.keyboard.on('keydown-Q', () => this.hud.closeMachineUI());
     this.input.keyboard.on('keydown-H', () => this.hud.toggleHelp());
+    this.input.keyboard.on('keydown-K', () => this.hud.toggleCharSheet(this));
 
     // Backtick to open chat
     this.input.keyboard.on('keydown', (e) => {
@@ -240,7 +244,7 @@ export class GameScene extends Phaser.Scene {
   // ── Mouse ──
 
   _onPointerDown(pointer) {
-    if (!this.myPlayer) return;
+    if (!this.myPlayer || this.isDead) return;
     if (this.hud?.machineUIOpen) return;
     // Allow game interaction outside UI panels
     if (this.hud?.isPointInInventory(pointer.x, pointer.y)) return;
@@ -555,6 +559,10 @@ export class GameScene extends Phaser.Scene {
       }
 
       this.currentZ = msg.player.z ?? 0;
+      this.hp = msg.player.hp ?? 100;
+      this.maxHp = msg.player.max_hp ?? 100;
+      this.playerName = msg.player.name;
+      hud.updateHP(this.hp, this.maxHp);
       this.myPlayer = this.add.sprite(msg.player.x, msg.player.y, 'player_self').setDepth(100);
       this.myNameTag = this.add.text(msg.player.x, msg.player.y - 20, msg.player.name, {
         fontSize: '10px', fontFamily: 'monospace', color: '#00ff88',
@@ -612,6 +620,35 @@ export class GameScene extends Phaser.Scene {
 
     this.socket.on('z_changed', (msg) => {
       this._handleZChange(msg.z);
+    });
+
+    this.socket.on('hp_update', (msg) => {
+      this.hp = msg.hp;
+      this.maxHp = msg.max_hp;
+      hud.updateHP(this.hp, this.maxHp);
+    });
+
+    this.socket.on('player_died', () => {
+      this.isDead = true;
+      this.hp = 0;
+      hud.updateHP(0, this.maxHp);
+      hud.showDeathOverlay(() => {
+        this.socket.send({ type: 'respawn' });
+      });
+    });
+
+    this.socket.on('respawned', (msg) => {
+      this.isDead = false;
+      this.hp = msg.hp;
+      this.maxHp = msg.max_hp;
+      if (this.myPlayer) {
+        this.myPlayer.x = msg.x;
+        this.myPlayer.y = msg.y;
+      }
+      if (msg.z !== this.currentZ) this._handleZChange(msg.z);
+      hud.updateHP(this.hp, this.maxHp);
+      hud.hideDeathOverlay();
+      hud.showToast('Respawned');
     });
 
     this.socket.on('error', (msg) => {

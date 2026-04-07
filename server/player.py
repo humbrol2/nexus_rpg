@@ -13,7 +13,21 @@ class Player:
     z: int = 0  # Z layer (0=surface, -1=underground, etc.)
     speed: float = 200.0  # pixels per second
     name: str = ""
+    hp: int = 100
+    max_hp: int = 100
     inventory: dict[str, int] = field(default_factory=dict)
+
+    def take_damage(self, amount: int) -> bool:
+        """Reduce HP by amount. Returns True if player died."""
+        self.hp = max(0, self.hp - amount)
+        return self.hp == 0
+
+    def heal(self, amount: int) -> None:
+        self.hp = min(self.max_hp, self.hp + amount)
+
+    @property
+    def is_dead(self) -> bool:
+        return self.hp <= 0
 
     @property
     def chunk_x(self) -> int:
@@ -56,6 +70,8 @@ class Player:
             "y": self.y,
             "z": self.z,
             "name": self.name,
+            "hp": self.hp,
+            "max_hp": self.max_hp,
         }
 
     def inventory_dict(self) -> dict:

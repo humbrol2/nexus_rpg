@@ -68,6 +68,11 @@ def init_db() -> None:
     r.ping()
     print(f"[DB] PostgreSQL connected: {PG_CONFIG['host']}")
     print(f"[DB] Redis connected: {REDIS_CONFIG['host']}")
+    # Migrations
+    with pg.cursor() as cur:
+        cur.execute("""
+            ALTER TABLE player_state ADD COLUMN IF NOT EXISTS hp INTEGER DEFAULT 100
+        """)
 
 
 # ── Users ──
@@ -142,27 +147,30 @@ def load_player_state(user_id: int) -> dict:
     # Use main connection with rollback to ensure fresh read
     pg = get_pg()
     with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("SELECT x, y, z, inventory FROM player_state WHERE user_id = %s", (user_id,))
+        cur.execute("SELECT x, y, z, inventory, hp FROM player_state WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
     if row:
         inv = row["inventory"]
         if isinstance(inv, str):
             inv = json.loads(inv)
-        return {"x": row["x"], "y": row["y"], "z": row.get("z", 0), "inventory": inv}
-    return {"x": 1024.0, "y": 1024.0, "z": 0, "inventory": {}}
+        return {
+            "x": row["x"], "y": row["y"], "z": row.get("z", 0),
+            "inventory": inv, "hp": row.get("hp", 100),
+        }
+    return {"x": 1024.0, "y": 1024.0, "z": 0, "inventory": {}, "hp": 100}
 
 
-def save_player_state(user_id: int, x: float, y: float, inventory: dict, z: int = 0) -> None:
+def save_player_state(user_id: int, x: float, y: float, inventory: dict, z: int = 0, hp: int = 100) -> None:
     pg = get_pg()
     with pg.cursor() as cur:
         cur.execute(
-            """INSERT INTO player_state (user_id, x, y, z, inventory, updated_at)
-               VALUES (%s, %s, %s, %s, %s, NOW())
+            """INSERT INTO player_state (user_id, x, y, z, inventory, hp, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, NOW())
                ON CONFLICT (user_id) DO UPDATE SET
                    x=EXCLUDED.x, y=EXCLUDED.y, z=EXCLUDED.z,
-                   inventory=EXCLUDED.inventory,
+                   inventory=EXCLUDED.inventory, hp=EXCLUDED.hp,
                    updated_at=NOW()""",
-            (user_id, x, y, z, json.dumps(inventory)),
+            (user_id, x, y, z, json.dumps(inventory), hp),
         )
 
 

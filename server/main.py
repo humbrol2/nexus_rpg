@@ -66,6 +66,7 @@ MSG_SCHEMAS: dict[str, list[str]] = {
     "get_sign": ["wx", "wy"],
     "chat": [],
     "change_z": ["direction"],
+    "respawn": [],
 }
 
 # ── Rate limiting ──
@@ -202,7 +203,7 @@ def save_player(ws_id: str, player: Player):
     """Save a single player's state."""
     user_id = ws_to_user.get(ws_id)
     if user_id:
-        db.save_player_state(user_id, player.x, player.y, player.inventory, player.z)
+        db.save_player_state(user_id, player.x, player.y, player.inventory, player.z, player.hp)
 
 
 async def send_json(ws: WebSocket, data: dict) -> None:
@@ -449,6 +450,7 @@ async def websocket_endpoint(ws: WebSocket):
     player.x = state["x"]
     player.y = state["y"]
     player.z = state.get("z", 0)
+    player.hp = state.get("hp", 100)
     player.inventory = state["inventory"]
 
     ws_to_user[ws_id] = user_id
@@ -503,6 +505,10 @@ async def websocket_endpoint(ws: WebSocket):
             # Rate limit check
             if not check_rate_limit(ws_id, msg_type):
                 await send_json(ws, {"type": "error", "reason": "rate_limited"})
+                continue
+
+            # Block most actions when dead
+            if player.is_dead and msg_type not in ("respawn", "chat"):
                 continue
 
             if msg_type == "move":
@@ -1037,6 +1043,20 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 player.z = new_z
                 await send_json(ws, {"type": "z_changed", "z": player.z})
+                await send_chunks_around(ws, player)
+
+            elif msg_type == "respawn":
+                if not player.is_dead:
+                    continue
+                player.hp = player.max_hp
+                player.x = SPAWN_X
+                player.y = SPAWN_Y
+                player.z = 0
+                await send_json(ws, {
+                    "type": "respawned",
+                    "x": player.x, "y": player.y, "z": player.z,
+                    "hp": player.hp, "max_hp": player.max_hp,
+                })
                 await send_chunks_around(ws, player)
 
             elif msg_type == "chat":
