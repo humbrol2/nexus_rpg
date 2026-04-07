@@ -686,7 +686,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if pair_z is not None and MIN_Z <= pair_z <= 0:
                     dest_tile = world.get_tile(wx, wy, pair_z)
                     if dest_tile not in SOLID_TILES and dest_tile < 100:
-                        pair_orig = world.get_tile(wx, wy, pair_z)
+                        pair_orig = dest_tile
                         world.set_tile(wx, wy, pair_tile, pair_z)
                         db.save_world_mod(wx, wy, pair_tile, pair_z)
                         building_owners[(wx, wy, pair_z)] = {"user_id": user_id, "original_tile": pair_orig}
