@@ -1472,57 +1472,20 @@ export class HUDScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     const panelW = 520;
-    const panelH = 310;
-    const px = (cam.width - panelW) / 2;
-    const py = (cam.height - panelH) / 2;
-
-    // Dimmed background
-    const dim = this.add.graphics().setDepth(9000);
-    dim.fillStyle(0x000000, 0.7);
-    dim.fillRect(0, 0, cam.width, cam.height);
-    this.helpElements.push(dim);
-
-    const container = this.add.container(px, py).setDepth(9001);
-    this.helpElements.push(container);
-
-    // Panel
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0d1117, 0.97);
-    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
-    bg.lineStyle(1, 0x00ff88, 0.3);
-    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
-    container.add(bg);
-
+    const colL = 16, colR = 270, keyW = 100;
     const ts = { fontSize: '11px', fontFamily: 'monospace', color: '#ccddcc' };
     const hs = { fontSize: '11px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold' };
     const ks = { fontSize: '11px', fontFamily: 'monospace', color: '#ffcc44' };
 
-    container.add(this.add.text(panelW / 2, 12, 'CONTROLS', {
-      fontSize: '15px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
-    }).setOrigin(0.5, 0));
-
-    const { btn: helpCloseBtn, hit: helpCloseHit } = createCloseButton(
-      this, px + panelW - 14, py + 8, '#335544', 9001, () => this.closeHelp()
-    );
-    container.add(helpCloseBtn);
-    this.helpElements.push(helpCloseHit);
-
-    // Two-column layout
-    const colL = 16;   // left column x
-    const colR = 270;  // right column x
-    const keyW = 100;  // key label width
-
-    const addSection = (x, yPos, title) => {
-      container.add(this.add.text(x, yPos, title, hs));
-      return yPos + 17;
-    };
+    // Build content arrays first to measure height
+    const texts = []; // [{x, y, text, style}]
+    const addSection = (x, yPos, title) => { texts.push({ x, y: yPos, text: title, style: hs }); return yPos + 17; };
     const addRow = (x, yPos, key, desc) => {
-      container.add(this.add.text(x + 4, yPos, key, ks));
-      container.add(this.add.text(x + keyW, yPos, desc, ts));
+      texts.push({ x: x + 4, y: yPos, text: key, style: ks });
+      texts.push({ x: x + keyW, y: yPos, text: desc, style: ts });
       return yPos + 15;
     };
 
-    // Left column
     let yL = 40;
     yL = addSection(colL, yL, 'MOVEMENT');
     yL = addRow(colL, yL, 'W A S D', 'Move');
@@ -1543,7 +1506,6 @@ export class HUDScene extends Phaser.Scene {
     yL = addRow(colL, yL, '1-9, 0', 'Select toolbar slot');
     yL = addRow(colL, yL, 'ESC', 'Cancel action');
 
-    // Right column
     let yR = 40;
     yR = addSection(colR, yR, 'MACHINES & CHESTS');
     yR = addRow(colR, yR, 'L-Click', 'Open UI');
@@ -1560,6 +1522,41 @@ export class HUDScene extends Phaser.Scene {
     yR = addRow(colR, yR, 'Stairs Down', 'Craft & place to descend');
     yR = addRow(colR, yR, 'Stairs Up', 'Craft & place to ascend');
     yR = addRow(colR, yR, 'Click stair', 'Use while standing on it');
+
+    // Auto-size panel to content
+    const panelH = Math.max(yL, yR) + 16;
+    const px = (cam.width - panelW) / 2;
+    const py = (cam.height - panelH) / 2;
+
+    const dim = this.add.graphics().setDepth(9000);
+    dim.fillStyle(0x000000, 0.7);
+    dim.fillRect(0, 0, cam.width, cam.height);
+    this.helpElements.push(dim);
+
+    const container = this.add.container(px, py).setDepth(9001);
+    this.helpElements.push(container);
+
+    const bg = this.add.graphics();
+    bg.fillStyle(0x0d1117, 0.97);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x00ff88, 0.3);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
+    container.add(bg);
+
+    container.add(this.add.text(panelW / 2, 12, 'CONTROLS', {
+      fontSize: '15px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
+    }).setOrigin(0.5, 0));
+
+    const { btn: helpCloseBtn, hit: helpCloseHit } = createCloseButton(
+      this, px + panelW - 14, py + 8, '#335544', 9001, () => this.closeHelp()
+    );
+    container.add(helpCloseBtn);
+    this.helpElements.push(helpCloseHit);
+
+    // Render all text entries
+    for (const t of texts) {
+      container.add(this.add.text(t.x, t.y, t.text, t.style));
+    }
 
     // Click anywhere to close
     const closeHit = this.add.rectangle(
