@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpaceColony - Multiplayer 2D Colony Sim</title>
+<style>
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#0a0a0f;--surface:#12121a;--border:#1e1e2e;
+    --accent:#22c55e;--accent-glow:#4ade80;--accent2:#06b6d4;
+    --text:#e2e8f0;--text-dim:#64748b;
+  }
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh;overflow-x:hidden}
+  .bg-grid{position:fixed;inset:0;z-index:0;background-image:linear-gradient(rgba(34,197,94,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(34,197,94,.05) 1px,transparent 1px);background-size:60px 60px;animation:gridMove 20s linear infinite}
+  @keyframes gridMove{to{background-position:60px 60px}}
+  .orb{position:fixed;border-radius:50%;filter:blur(80px);opacity:.12;pointer-events:none;z-index:0}
+  .orb-1{width:500px;height:500px;background:var(--accent);top:-10%;left:-5%;animation:float1 15s ease-in-out infinite}
+  .orb-2{width:400px;height:400px;background:var(--accent2);bottom:-10%;right:-5%;animation:float2 18s ease-in-out infinite}
+  @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(80px,60px)}}
+  @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-60px,-80px)}}
+  .container{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:2rem}
+  a{color:var(--accent-glow);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* Nav */
+  .nav{display:flex;align-items:center;justify-content:space-between;padding:1rem 0;margin-bottom:2rem;border-bottom:1px solid var(--border)}
+  .nav-brand{font-size:1rem;color:var(--text-dim);font-weight:600}
+  .nav-brand a{color:var(--text-dim)}
+  .nav-brand a:hover{color:var(--text)}
+
+  /* Hero */
+  .hero{text-align:center;padding:4rem 0 3rem}
+  .hero-icon{font-size:4rem;margin-bottom:1rem}
+  .hero h1{font-size:clamp(2rem,5vw,3.5rem);font-weight:800;background:linear-gradient(135deg,var(--accent-glow),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:.5rem}
+  .hero .sub{font-size:1.2rem;color:var(--text-dim);margin-bottom:2rem}
+  .hero .badge-live{display:inline-block;padding:.3rem .8rem;border-radius:20px;font-size:.8rem;font-weight:600;background:rgba(34,197,94,.15);color:#4ade80;margin-bottom:1.5rem}
+  .cta-group{display:flex;gap:1rem;flex-wrap:wrap;justify-content:center}
+  .btn{display:inline-flex;align-items:center;gap:.5rem;padding:.85rem 2rem;border-radius:12px;font-size:1rem;font-weight:600;text-decoration:none;transition:all .25s;border:none;cursor:pointer}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),#16a34a);color:#fff;box-shadow:0 0 30px rgba(34,197,94,.3)}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 0 40px rgba(34,197,94,.5);text-decoration:none}
+  .btn-secondary{background:var(--surface);color:var(--text);border:1px solid var(--border)}
+  .btn-secondary:hover{border-color:var(--accent);text-decoration:none}
+
+  /* Sections */
+  section{padding:3rem 0}
+  .section-title{font-size:1.8rem;font-weight:700;margin-bottom:.5rem}
+  .section-title em{font-style:normal;background:linear-gradient(135deg,var(--accent-glow),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .section-desc{color:var(--text-dim);margin-bottom:2rem;font-size:1rem;line-height:1.7}
+
+  /* Feature grid */
+  .features{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.25rem}
+  .feature{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1.5rem;transition:all .25s}
+  .feature:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .feature-icon{font-size:1.5rem;margin-bottom:.75rem}
+  .feature h3{font-size:1.1rem;font-weight:700;margin-bottom:.4rem}
+  .feature p{color:var(--text-dim);font-size:.9rem;line-height:1.6}
+
+  /* Controls table */
+  .controls-table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:14px;overflow:hidden;border:1px solid var(--border)}
+  .controls-table th{background:#1a1a2e;padding:.75rem 1rem;text-align:left;font-size:.85rem;color:var(--accent-glow);font-weight:600;border-bottom:1px solid var(--border)}
+  .controls-table td{padding:.6rem 1rem;border-bottom:1px solid var(--border);font-size:.9rem}
+  .controls-table tr:last-child td{border-bottom:none}
+  .controls-table .key{font-family:'Consolas',monospace;background:rgba(34,197,94,.1);color:var(--accent-glow);padding:.15rem .5rem;border-radius:4px;font-size:.85rem;font-weight:600}
+
+  /* Tech stack */
+  .tech-tags{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+  .tech-tags span{padding:.3rem .75rem;border-radius:8px;font-size:.8rem;font-weight:500;background:rgba(34,197,94,.08);color:var(--accent-glow);border:1px solid rgba(34,197,94,.15)}
+
+  /* Screenshot placeholder */
+  .screenshot{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:3rem;text-align:center;color:var(--text-dim);font-style:italic;margin:2rem 0}
+
+  footer{text-align:center;padding:3rem 0;color:var(--text-dim);font-size:.85rem;border-top:1px solid var(--border)}
+  @media(max-width:640px){.container{padding:1rem}.features{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="orb orb-1"></div>
+<div class="orb orb-2"></div>
+<div class="container">
+
+  <nav class="nav">
+    <div class="nav-brand"><a href="/">&larr; Humbrol2 Games</a></div>
+    <a href="https://rpg.humbrol2.com" class="btn btn-primary" style="padding:.5rem 1.25rem;font-size:.85rem">Play Now</a>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-icon">&#127758;</div>
+    <span class="badge-live">&#9679; Live</span>
+    <h1>SpaceColony</h1>
+    <p class="sub">Multiplayer 2D colony sim &mdash; build, mine, farm, and explore an alien planet</p>
+    <div class="cta-group">
+      <a href="https://rpg.humbrol2.com" class="btn btn-primary">&#127918; Play Now</a>
+      <a href="https://github.com/humbrol2/nexus_rpg" target="_blank" class="btn btn-secondary">GitHub</a>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">What is <em>SpaceColony</em>?</h2>
+    <p class="section-desc">
+      Land on an alien planet. Build a base. Mine resources. Research technology. Farm crops. Explore underground caves.
+      SpaceColony is a real-time multiplayer colony sim that runs in your browser &mdash; no download required.
+      Every player shares the same persistent world, with procedurally generated terrain, biomes, and cave systems.
+    </p>
+    <div class="tech-tags">
+      <span>Phaser 3</span>
+      <span>Python FastAPI</span>
+      <span>WebSocket</span>
+      <span>PostgreSQL</span>
+      <span>Redis</span>
+      <span>Procedural Generation</span>
+      <span>JWT Auth</span>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Core <em>Features</em></h2>
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">&#9935;</div>
+        <h3>Mining &amp; Resources</h3>
+        <p>Mine iron, copper, crystal, and stone from the alien landscape. Ores have HP and respawn over time. Smelt raw ore into plates at your furnace.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#128296;</div>
+        <h3>Crafting &amp; Building</h3>
+        <p>Hand-craft walls, paths, signs, and stairs. Build machines &mdash; auto-miners, fabricators, furnaces, and storage chests. Research unlocks new recipes.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#127793;</div>
+        <h3>Farming</h3>
+        <p>Plant wheat seeds on farm plots. Crops grow in real time (even while offline). Harvest wheat for future food crafting. Hover to see growth percentage.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#128488;</div>
+        <h3>Underground Caves</h3>
+        <p>Craft stairs to descend into procedurally generated cave systems. Find deep iron, deep copper, and rare crystals. Multiple Z-levels to explore.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#128101;</div>
+        <h3>Multiplayer</h3>
+        <p>See other players in real-time. Chat, claim land, and build together. Persistent world shared across all players. Spatial culling for performance.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#128300;</div>
+        <h3>Research Tree</h3>
+        <p>Unlock new buildings, machines, underground access, and farming through a tiered tech tree. Research costs resources and time.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#127760;</div>
+        <h3>Procedural World</h3>
+        <p>Infinite terrain generated from noise functions &mdash; grasslands, forests, deserts, mountains, and oceans. No two sessions look the same. Procedural pixel-art tiles with no sprite assets.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">&#128153;</div>
+        <h3>Health &amp; Survival</h3>
+        <p>HP system with a persistent health bar. Death triggers respawn at the colony spawn point. Character sheet shows all your stats.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Controls <em>Reference</em></h2>
+    <table class="controls-table">
+      <tr><th>Key</th><th>Action</th></tr>
+      <tr><td><span class="key">WASD</span></td><td>Move your colonist</td></tr>
+      <tr><td><span class="key">I</span></td><td>Inventory</td></tr>
+      <tr><td><span class="key">C</span></td><td>Crafting menu</td></tr>
+      <tr><td><span class="key">R</span></td><td>Research tree</td></tr>
+      <tr><td><span class="key">K</span></td><td>Character sheet</td></tr>
+      <tr><td><span class="key">H</span></td><td>Help overlay</td></tr>
+      <tr><td><span class="key">M</span> / <span class="key">Tab</span></td><td>World map</td></tr>
+      <tr><td><span class="key">Scroll</span></td><td>Zoom in/out</td></tr>
+      <tr><td><span class="key">Left click</span></td><td>Mine / place / interact / plant / harvest</td></tr>
+      <tr><td><span class="key">Right click</span></td><td>Pick up building</td></tr>
+      <tr><td><span class="key">`</span></td><td>Open chat</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2 class="section-title">Getting <em>Started</em></h2>
+    <p class="section-desc">
+      <strong>1.</strong> Visit <a href="https://rpg.humbrol2.com">rpg.humbrol2.com</a> and create an account.<br>
+      <strong>2.</strong> Press <strong>R</strong> to open the research tree. Start with <em>Stone Tools</em>.<br>
+      <strong>3.</strong> Mine rocks and trees for stone and wood.<br>
+      <strong>4.</strong> Craft walls and paths to build your base.<br>
+      <strong>5.</strong> Research <em>Smelting</em> to unlock the furnace and smelt ores into plates.<br>
+      <strong>6.</strong> Research <em>Farming</em> to grow wheat on farm plots.<br>
+      <strong>7.</strong> Research <em>Underground Access</em> and craft stairs to explore caves for rare ores.<br>
+      <strong>8.</strong> Claim land with a <em>Claim Flag</em> to protect your builds.
+    </p>
+  </section>
+
+  <footer>
+    <p>&copy; 2026 Humbrol2 Games &bull; <a href="/">Home</a> &bull; <a href="https://github.com/humbrol2/nexus_rpg" target="_blank">GitHub</a> &bull; <a href="https://rpg.humbrol2.com">Play</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
