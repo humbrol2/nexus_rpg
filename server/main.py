@@ -224,22 +224,25 @@ async def broadcast_json(data: dict) -> None:
 
 async def send_chunks_around(ws: WebSocket, player: Player) -> None:
     cx, cy, cz = player.chunk_x, player.chunk_y, player.chunk_z
-    messages: list[dict] = []
+    # Sort chunks: center first, then by distance for progressive loading
+    offsets = []
     for dx in range(-CHUNK_LOAD_RADIUS, CHUNK_LOAD_RADIUS + 1):
         for dy in range(-CHUNK_LOAD_RADIUS, CHUNK_LOAD_RADIUS + 1):
-            chunk = world.get_chunk(cx + dx, cy + dy, cz)
-            messages.append({
-                "type": "chunk",
-                "cx": chunk.cx, "cy": chunk.cy, "cz": chunk.cz,
-                "tiles": chunk.to_flat(), "size": CHUNK_SIZE,
-            })
-            for m in machine_mgr.get_in_chunk(cx + dx, cy + dy, cz):
-                messages.append({"type": "machine_state", "machine": m.to_dict()})
-            for sign in db.get_signs_in_chunk(cx + dx, cy + dy, cz=cz):
-                messages.append({"type": "sign_data", "sign": sign})
-            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
-    # Send as single batch to reduce round-trips
-    await send_json(ws, {"type": "batch", "messages": messages})
+            offsets.append((abs(dx) + abs(dy), dx, dy))
+    offsets.sort()
+
+    for _, dx, dy in offsets:
+        chunk = world.get_chunk(cx + dx, cy + dy, cz)
+        await send_json(ws, {
+            "type": "chunk",
+            "cx": chunk.cx, "cy": chunk.cy, "cz": chunk.cz,
+            "tiles": chunk.to_flat(), "size": CHUNK_SIZE,
+        })
+        for m in machine_mgr.get_in_chunk(cx + dx, cy + dy, cz):
+            await send_json(ws, {"type": "machine_state", "machine": m.to_dict()})
+        for sign in db.get_signs_in_chunk(cx + dx, cy + dy, cz=cz):
+            await send_json(ws, {"type": "sign_data", "sign": sign})
+        npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
 
 
 @asynccontextmanager
