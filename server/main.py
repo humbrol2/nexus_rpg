@@ -128,6 +128,8 @@ ws_to_user: dict[str, int] = {}
 player_research: dict[str, PlayerResearch] = {}
 # Track who placed each building: (wx, wy) -> user_id
 building_owners: dict[tuple[int, int], int] = {}
+# Crop data: (wx, wy, wz) -> {"planted_at": float_timestamp, "grow_time": int}
+crop_data: dict[tuple[int, int, int], dict] = {}
 
 
 def check_zone_permission(wx: int, wy: int, user_id: int, is_admin: bool) -> str | None:
@@ -163,6 +165,15 @@ def load_world_state():
                 world._respawn_queue[(wx, wy, wz)] = (original, _time.time() + RESPAWN_TIMES[original])
                 respawn_count += 1
     print(f"[INIT] Queued {respawn_count} tile respawns")
+
+    # Load crops into memory
+    global crop_data
+    for c in db.load_all_crops():
+        crop_data[(c["wx"], c["wy"], c["wz"])] = {
+            "planted_at": c["planted_at"].timestamp(),
+            "grow_time": c["grow_time"],
+        }
+    print(f"[INIT] Loaded {len(crop_data)} crops")
 
     # Load land claims
     claims = db.get_all_claims()
@@ -248,6 +259,16 @@ async def send_chunks_around(ws: WebSocket, player: Player) -> None:
             await send_json(ws, {"type": "machine_state", "machine": m.to_dict()})
         for sign in db.get_signs_in_chunk(cx + dx, cy + dy, cz=cz):
             await send_json(ws, {"type": "sign_data", "sign": sign})
+        # Send crop progress for growing crops in this chunk
+        now = time.time()
+        chunk_cx, chunk_cy = cx + dx, cy + dy
+        for (cwx, cwy, cwz), cd in crop_data.items():
+            if cwz != cz: continue
+            if cwx // CHUNK_SIZE != chunk_cx or cwy // CHUNK_SIZE != chunk_cy: continue
+            pct = min(100, int((now - cd["planted_at"]) / cd["grow_time"] * 100))
+            await send_json(ws, {
+                "type": "crop_info", "wx": cwx, "wy": cwy, "wz": cwz, "pct": pct,
+            })
         npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
 
 
@@ -1091,6 +1112,7 @@ async def websocket_endpoint(ws: WebSocket):
                 world.set_tile(wx, wy, FARM_GROWING, wz)
                 db.save_world_mod(wx, wy, FARM_GROWING, wz)
                 db.save_crop(wx, wy, wz, "wheat", CROP_GROW_TIME)
+                crop_data[(wx, wy, wz)] = {"planted_at": time.time(), "grow_time": CROP_GROW_TIME}
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": FARM_GROWING})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "crop_planted", "wx": wx, "wy": wy})
@@ -1100,27 +1122,23 @@ async def websocket_endpoint(ws: WebSocket):
                 wz = player.z
                 tile = world.get_tile(wx, wy, wz)
                 if tile == FARM_GROWING:
-                    # Show time remaining
-                    crops = db.load_all_crops()
-                    for c in crops:
-                        if c["wx"] == wx and c["wy"] == wy and c["wz"] == wz:
-                            import datetime
-                            elapsed = (datetime.datetime.now() - c["planted_at"]).total_seconds()
-                            remaining = max(0, c["grow_time"] - elapsed)
-                            mins = int(remaining // 60)
-                            secs = int(remaining % 60)
-                            await send_json(ws, {"type": "error", "reason": f"growing_{mins}:{secs:02d}"})
-                            break
+                    cd = crop_data.get((wx, wy, wz))
+                    if cd:
+                        elapsed = time.time() - cd["planted_at"]
+                        remaining = max(0, cd["grow_time"] - elapsed)
+                        mins = int(remaining // 60)
+                        secs = int(remaining % 60)
+                        await send_json(ws, {"type": "error", "reason": f"growing_{mins}:{secs:02d}"})
                     continue
                 if tile != FARM_READY:
                     await send_json(ws, {"type": "error", "reason": "not_ready"})
                     continue
-                # Harvest: give wheat + seeds back, revert to farm plot
                 player.add_item("wheat", 2)
                 player.add_item("wheat_seeds", 1)
                 world.set_tile(wx, wy, FARM_PLOT, wz)
                 db.save_world_mod(wx, wy, FARM_PLOT, wz)
                 db.delete_crop(wx, wy, wz)
+                crop_data.pop((wx, wy, wz), None)
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": FARM_PLOT})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "crop_harvested", "wx": wx, "wy": wy})

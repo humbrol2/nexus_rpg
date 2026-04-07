@@ -45,8 +45,8 @@ TILES = {
     104: {"name": "stairs_up",  "label": "Stairs Up",    "solid": False, "speed": 1.0, "color": [80,60,40]},
     # Farming
     105: {"name": "farm_plot",    "label": "Farm Plot",    "solid": False, "speed": 0.8, "color": [70,50,25]},
-    106: {"name": "farm_growing", "label": "Growing Crop", "solid": False, "speed": 0.8, "color": [60,90,30]},
-    107: {"name": "farm_ready",   "label": "Mature Crop",  "solid": False, "speed": 0.8, "color": [200,180,50]},
+    106: {"name": "farm_growing", "label": "Wheat (growing)", "solid": False, "speed": 0.8, "color": [60,90,30]},
+    107: {"name": "farm_ready",   "label": "Wheat (ready)",  "solid": False, "speed": 0.8, "color": [200,180,50]},
     # Machines
     200: {"name": "miner",        "label": "Auto-Miner",   "solid": True,  "speed": 1.0, "color": [204,136,51]},
     201: {"name": "fabricator",   "label": "Fabricator",    "solid": True,  "speed": 1.0, "color": [102,136,204]},

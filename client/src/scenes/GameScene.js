@@ -54,6 +54,7 @@ export class GameScene extends Phaser.Scene {
     this.hp = 100;
     this.maxHp = 100;
     this.isDead = false;
+    this.cropInfo = {}; // "wx,wy" -> pct
     this.isMining = false;
     this.mineTarget = null;
     this.mineProgress = 0;
@@ -329,7 +330,11 @@ export class GameScene extends Phaser.Scene {
     this.cursorWY = wy;
 
     const tile = this._getTileAt(wx, wy);
-    const tileLabel = TILE_LABELS[tile] || '???';
+    let tileLabel = TILE_LABELS[tile] || '???';
+    if (tile === 106) { // farm_growing — show percentage
+      const pct = this.cropInfo[`${wx},${wy}`];
+      if (pct !== undefined) tileLabel = `Wheat (${pct}%)`;
+    }
     const signData = this.signs[`${wx},${wy}`];
     if (signData) {
       this.hud.updateTileInfo(`[${wx}, ${wy}] Sign: "${signData.text}"`);
@@ -661,10 +666,15 @@ export class GameScene extends Phaser.Scene {
       hud.showToast('Respawned');
     });
 
-    this.socket.on('crop_planted', () => {
+    this.socket.on('crop_info', (msg) => {
+      this.cropInfo[`${msg.wx},${msg.wy}`] = msg.pct;
+    });
+    this.socket.on('crop_planted', (msg) => {
+      this.cropInfo[`${msg.wx},${msg.wy}`] = 0;
       hud.showToast('Planted wheat seeds');
     });
-    this.socket.on('crop_harvested', () => {
+    this.socket.on('crop_harvested', (msg) => {
+      delete this.cropInfo[`${msg.wx},${msg.wy}`];
       hud.showToast('Harvested wheat!');
     });
 
