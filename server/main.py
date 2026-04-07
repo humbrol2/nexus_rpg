@@ -237,9 +237,9 @@ async def send_chunks_around(ws: WebSocket, player: Player) -> None:
                 messages.append({"type": "machine_state", "machine": m.to_dict()})
             for sign in db.get_signs_in_chunk(cx + dx, cy + dy, cz=cz):
                 messages.append({"type": "sign_data", "sign": sign})
+            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
     # Send as single batch to reduce round-trips
     await send_json(ws, {"type": "batch", "messages": messages})
-            npc_mgr.spawn_in_chunk(cx + dx, cy + dy, world, cz=cz)
 
 
 @asynccontextmanager
