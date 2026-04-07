@@ -19,7 +19,11 @@ from world import WorldGenerator, CHUNK_SIZE, SOLID_TILES, DIRT, WALL, FLOOR, RE
 SIGN = 102
 STAIRS_DOWN = 103
 STAIRS_UP = 104
+FARM_PLOT = 105
+FARM_GROWING = 106
+FARM_READY = 107
 MIN_Z = -3  # deepest allowed layer (expandable)
+CROP_GROW_TIME = 300  # seconds (5 minutes)
 from item_registry import (
     TILES, ITEMS, MINABLE, BUILDABLE, HAND_RECIPES, MACHINES,
     MACHINE_RECIPES, CRAFTING_MENU, ANIMALS, get_client_registry,
@@ -67,6 +71,8 @@ MSG_SCHEMAS: dict[str, list[str]] = {
     "chat": [],
     "change_z": ["direction"],
     "respawn": [],
+    "plant_crop": ["wx", "wy"],
+    "harvest_crop": ["wx", "wy"],
 }
 
 # ── Rate limiting ──
@@ -607,6 +613,17 @@ async def websocket_endpoint(ws: WebSocket):
 
                         player.add_item(session["item"], session["count"])
 
+                        # Bonus drop (e.g. wheat seeds from flora)
+                        import random
+                        minable_info = MINABLE.get(tile_s, {})
+                        bonus = minable_info.get("bonus")
+                        if bonus and random.random() < bonus["chance"]:
+                            player.add_item(bonus["item"], bonus["drop"])
+                            await send_json(ws, {
+                                "type": "mine_success",
+                                "item": bonus["item"], "count": bonus["drop"],
+                            })
+
                         if depleted:
                             from world import CAVE_FLOOR
                             empty_tile = CAVE_FLOOR if wz_s != 0 else DIRT
@@ -702,7 +719,7 @@ async def websocket_endpoint(ws: WebSocket):
                 tile = world.get_tile(wx, wy, wz)
                 bdata = building_owners.get((wx, wy, wz))
 
-                removable = {WALL, FLOOR, SIGN, STAIRS_DOWN, STAIRS_UP}
+                removable = {WALL, FLOOR, SIGN, STAIRS_DOWN, STAIRS_UP, FARM_PLOT}
                 if tile not in removable:
                     await send_json(ws, {"type": "build_fail", "reason": "not_a_building"})
                     continue
@@ -714,6 +731,7 @@ async def websocket_endpoint(ws: WebSocket):
                 TILE_TO_ITEM = {
                     WALL: "stone_wall", FLOOR: "stone_path", SIGN: "sign",
                     STAIRS_DOWN: "stairs_down", STAIRS_UP: "stairs_up",
+                    FARM_PLOT: "farm_plot",
                 }
                 refund_item = TILE_TO_ITEM.get(tile)
                 if refund_item:
@@ -1060,6 +1078,53 @@ async def websocket_endpoint(ws: WebSocket):
                 })
                 await send_chunks_around(ws, player)
 
+            elif msg_type == "plant_crop":
+                wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
+                tile = world.get_tile(wx, wy, wz)
+                if tile != FARM_PLOT:
+                    await send_json(ws, {"type": "error", "reason": "not_farm_plot"})
+                    continue
+                if not player.remove_item("wheat_seeds"):
+                    await send_json(ws, {"type": "error", "reason": "no_seeds"})
+                    continue
+                world.set_tile(wx, wy, FARM_GROWING, wz)
+                db.save_world_mod(wx, wy, FARM_GROWING, wz)
+                db.save_crop(wx, wy, wz, "wheat", CROP_GROW_TIME)
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": FARM_GROWING})
+                await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                await send_json(ws, {"type": "crop_planted", "wx": wx, "wy": wy})
+
+            elif msg_type == "harvest_crop":
+                wx, wy = msg["wx"], msg["wy"]
+                wz = player.z
+                tile = world.get_tile(wx, wy, wz)
+                if tile == FARM_GROWING:
+                    # Show time remaining
+                    crops = db.load_all_crops()
+                    for c in crops:
+                        if c["wx"] == wx and c["wy"] == wy and c["wz"] == wz:
+                            import datetime
+                            elapsed = (datetime.datetime.now() - c["planted_at"]).total_seconds()
+                            remaining = max(0, c["grow_time"] - elapsed)
+                            mins = int(remaining // 60)
+                            secs = int(remaining % 60)
+                            await send_json(ws, {"type": "error", "reason": f"growing_{mins}:{secs:02d}"})
+                            break
+                    continue
+                if tile != FARM_READY:
+                    await send_json(ws, {"type": "error", "reason": "not_ready"})
+                    continue
+                # Harvest: give wheat + seeds back, revert to farm plot
+                player.add_item("wheat", 2)
+                player.add_item("wheat_seeds", 1)
+                world.set_tile(wx, wy, FARM_PLOT, wz)
+                db.save_world_mod(wx, wy, FARM_PLOT, wz)
+                db.delete_crop(wx, wy, wz)
+                await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": FARM_PLOT})
+                await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
+                await send_json(ws, {"type": "crop_harvested", "wx": wx, "wy": wy})
+
             elif msg_type == "chat":
                 text = msg.get("text", "").strip()[:200]
                 # Sanitize: strip control chars, HTML tags
@@ -1144,6 +1209,22 @@ async def game_loop():
                     })
             except Exception as e:
                 print(f"[ERROR] respawn tick failed: {e}")
+
+            # Mature crops that have finished growing
+            try:
+                mature = db.get_mature_crops()
+                for crop in mature:
+                    wx, wy, wz = crop["wx"], crop["wy"], crop["wz"]
+                    current = world.get_tile(wx, wy, wz)
+                    if current == FARM_GROWING:
+                        world.set_tile(wx, wy, FARM_READY, wz)
+                        db.save_world_mod(wx, wy, FARM_READY, wz)
+                        await broadcast_json({
+                            "type": "tile_update",
+                            "wx": wx, "wy": wy, "wz": wz, "tile": FARM_READY,
+                        })
+            except Exception as e:
+                print(f"[ERROR] crop maturation failed: {e}")
 
         # Spatial culling: each player only gets nearby entities
         if connections:

@@ -43,6 +43,10 @@ TILES = {
     102: {"name": "sign",       "label": "Sign",         "solid": False, "speed": 1.0, "color": [140,110,60]},
     103: {"name": "stairs_down","label": "Stairs Down",  "solid": False, "speed": 1.0, "color": [80,60,40]},
     104: {"name": "stairs_up",  "label": "Stairs Up",    "solid": False, "speed": 1.0, "color": [80,60,40]},
+    # Farming
+    105: {"name": "farm_plot",    "label": "Farm Plot",    "solid": False, "speed": 0.8, "color": [70,50,25]},
+    106: {"name": "farm_growing", "label": "Growing Crop", "solid": False, "speed": 0.8, "color": [60,90,30]},
+    107: {"name": "farm_ready",   "label": "Mature Crop",  "solid": False, "speed": 0.8, "color": [200,180,50]},
     # Machines
     200: {"name": "miner",        "label": "Auto-Miner",   "solid": True,  "speed": 1.0, "color": [204,136,51]},
     201: {"name": "fabricator",   "label": "Fabricator",    "solid": True,  "speed": 1.0, "color": [102,136,204]},
@@ -71,7 +75,7 @@ MINABLE = {
     6:  {"item": "stone",      "drop": 3, "time": 2.5, "hp": 10, "respawn": 300},
     7:  {"item": "iron_ore",   "drop": 2, "time": 2.0, "hp": 15, "respawn": 300},
     8:  {"item": "copper_ore", "drop": 2, "time": 2.0, "hp": 15, "respawn": 300},
-    9:  {"item": "biomass",    "drop": 2, "time": 1.0, "hp": 3,  "respawn": 120},
+    9:  {"item": "biomass",    "drop": 2, "time": 1.0, "hp": 3,  "respawn": 120, "bonus": {"item": "wheat_seeds", "drop": 1, "chance": 0.3}},
     10: {"item": "crystal",    "drop": 1, "time": 2.5, "hp": 8,  "respawn": 600},
     11: {"item": "wood",       "drop": 3, "time": 2.0, "hp": 8,  "respawn": 180},
     100:{"item": "stone",      "drop": 1, "time": 1.0, "hp": 1,  "respawn": 0},
@@ -94,6 +98,8 @@ ITEMS = {
     "crystal":     {"label": "Crystal",     "color": "#88ccee", "category": "resource"},
     "biomass":     {"label": "Biomass",     "color": "#2aaa5a", "category": "resource"},
     "wood":        {"label": "Wood",        "color": "#8b6b3a", "category": "resource"},
+    "wheat_seeds": {"label": "Wheat Seeds", "color": "#88aa44", "category": "resource"},
+    "wheat":       {"label": "Wheat",       "color": "#c8b040", "category": "resource"},
     # Processed
     "iron_plate":  {"label": "Iron Plate",  "color": "#aaaacc", "category": "processed"},
     "copper_plate":{"label": "Copper Plate","color": "#ddaa66", "category": "processed"},
@@ -120,6 +126,10 @@ ITEMS = {
     "stairs_up": {
         "label": "Stairs Up", "color": "#503c28", "category": "placeable",
         "placeable": {"build_key": "stairs_up", "tile_id": 104, "passable": True},
+    },
+    "farm_plot": {
+        "label": "Farm Plot", "color": "#46321a", "category": "placeable",
+        "placeable": {"build_key": "farm_plot", "tile_id": 105, "passable": True},
     },
     # Chests (crafted items — placed via machine system)
     "wood_chest":   {"label": "Wood Chest",   "color": "#8b6b3a", "category": "machine_item", "machine_type": 204},
@@ -153,6 +163,7 @@ HAND_RECIPES = {
     "stone_furnace": {"cost": {"stone": 15}, "qty": 1, "research": "smelting"},
     "stairs_down":   {"cost": {"stone": 5, "wood": 3}, "qty": 1, "research": "underground"},
     "stairs_up":     {"cost": {"stone": 5, "wood": 3}, "qty": 1, "research": "underground"},
+    "farm_plot":     {"cost": {"wood": 3, "biomass": 2}, "qty": 1, "research": "farming"},
 }
 
 # ══════════════════════════════════════════════════════════════════
@@ -266,6 +277,13 @@ CRAFTING_MENU = [
             {"name": "Iron Gear", "cost": {"iron_plate": 2},                     "machine": True},
             {"name": "Circuit",   "cost": {"copper_plate": 1, "iron_plate": 1},  "machine": True},
             {"name": "Wall Block","cost": {"stone": 5},                           "machine": True},
+        ],
+    },
+    {
+        "title": "FARMING",
+        "color": "#88aa44",
+        "items": [
+            {"name": "Farm Plot", "craft_id": "farm_plot", "cost": {"wood": 3, "biomass": 2}, "note": "Place, then plant seeds", "research": "farming"},
         ],
     },
 ]

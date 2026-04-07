@@ -90,6 +90,17 @@ def init_db() -> None:
                 END IF;
             END $$;
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS crops (
+                wx INTEGER NOT NULL,
+                wy INTEGER NOT NULL,
+                wz INTEGER NOT NULL DEFAULT 0,
+                crop_type VARCHAR(32) NOT NULL DEFAULT 'wheat',
+                planted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                grow_time INTEGER NOT NULL DEFAULT 300,
+                PRIMARY KEY (wx, wy, wz)
+            )
+        """)
 
 
 # ── Users ──
@@ -480,3 +491,41 @@ def get_chat_log(limit: int = 100) -> list[dict]:
             (limit,),
         )
         return [dict(r) for r in reversed(cur.fetchall())]
+
+
+# ── Crops ──
+
+def save_crop(wx: int, wy: int, wz: int, crop_type: str = "wheat", grow_time: int = 300) -> None:
+    pg = get_pg()
+    with pg.cursor() as cur:
+        cur.execute(
+            """INSERT INTO crops (wx, wy, wz, crop_type, planted_at, grow_time)
+               VALUES (%s, %s, %s, %s, NOW(), %s)
+               ON CONFLICT (wx, wy, wz) DO UPDATE SET
+                   crop_type=EXCLUDED.crop_type, planted_at=NOW(), grow_time=EXCLUDED.grow_time""",
+            (wx, wy, wz, crop_type, grow_time),
+        )
+
+
+def delete_crop(wx: int, wy: int, wz: int) -> None:
+    pg = get_pg()
+    with pg.cursor() as cur:
+        cur.execute("DELETE FROM crops WHERE wx=%s AND wy=%s AND wz=%s", (wx, wy, wz))
+
+
+def load_all_crops() -> list[dict]:
+    """Load all crops for server startup."""
+    pg = get_pg()
+    with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT wx, wy, wz, crop_type, planted_at, grow_time FROM crops")
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_mature_crops() -> list[dict]:
+    """Get crops where growth time has elapsed."""
+    pg = get_pg()
+    with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT wx, wy, wz, crop_type FROM crops WHERE NOW() >= planted_at + (grow_time || ' seconds')::interval"
+        )
+        return [dict(r) for r in cur.fetchall()]

@@ -297,6 +297,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Farm tiles
+    if (tile === 105) { // farm_plot — plant if player has seeds
+      this.socket.send({ type: 'plant_crop', wx, wy });
+      return;
+    }
+    if (tile === 106 || tile === 107) { // growing or ready
+      this.socket.send({ type: 'harvest_crop', wx, wy });
+      return;
+    }
+
     // Stairs — must be standing on the stair tile to use it
     if (tile === 103 && wx === ptx && wy === pty) {
       this.socket.send({ type: 'change_z', direction: -1 });
@@ -651,16 +661,30 @@ export class GameScene extends Phaser.Scene {
       hud.showToast('Respawned');
     });
 
+    this.socket.on('crop_planted', () => {
+      hud.showToast('Planted wheat seeds');
+    });
+    this.socket.on('crop_harvested', () => {
+      hud.showToast('Harvested wheat!');
+    });
+
     this.socket.on('error', (msg) => {
       const reasons = {
         cannot_go_there: "Can't go there",
         need_stairs_down: 'Stand on stairs down to descend',
         need_stairs_up: 'Stand on stairs up to ascend',
         blocked_above: 'Blocked above',
+        not_farm_plot: 'Not a farm plot',
+        no_seeds: 'No wheat seeds',
+        not_ready: 'Crop not ready yet',
         too_deep: "Can't place stairs down here",
         already_surface: "Can't place stairs up on surface",
       };
-      hud.showToast(reasons[msg.reason] || msg.reason);
+      let text = reasons[msg.reason];
+      if (!text && msg.reason?.startsWith('growing_')) {
+        text = `Growing... ${msg.reason.slice(8)} remaining`;
+      }
+      hud.showToast(text || msg.reason);
     });
 
     this.socket.on('inventory', (msg) => {

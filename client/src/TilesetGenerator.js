@@ -520,6 +520,58 @@ function paintStairsUp(ctx, x, y, rng) {
   ctx.fillRect(x + 14, y + 4, 4, 2);
 }
 
+function paintFarmPlot(ctx, x, y, rng) {
+  const base = { r: 70, g: 50, b: 25 };
+  for (let py = 0; py < T; py++) {
+    for (let px = 0; px < T; px++) {
+      ctx.fillStyle = rgbStr(vary(rng, base.r, 10), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      ctx.fillRect(x + px, y + py, 1, 1);
+    }
+  }
+  // Furrow lines
+  for (let row = 0; row < 4; row++) {
+    const fy = y + 4 + row * 8;
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(x + 2, fy, T - 4, 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(x + 2, fy + 1, T - 4, 1);
+  }
+  ctx.strokeStyle = 'rgba(100,80,40,0.3)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
+}
+
+function paintFarmGrowing(ctx, x, y, rng) {
+  paintFarmPlot(ctx, x, y, rng);
+  // Small seedlings
+  for (let i = 0; i < 6; i++) {
+    const sx = (rng() * 22 + 5) | 0;
+    const sy = (rng() * 14 + 14) | 0;
+    ctx.fillStyle = rgbStr(50 + rng() * 30, 100 + rng() * 40, 30);
+    ctx.fillRect(x + sx, y + sy - 4, 1, 4);
+    ctx.fillStyle = rgbStr(60 + rng() * 20, 120 + rng() * 30, 40);
+    ctx.fillRect(x + sx - 1, y + sy - 5, 3, 2);
+  }
+}
+
+function paintFarmReady(ctx, x, y, rng) {
+  paintFarmPlot(ctx, x, y, rng);
+  // Tall wheat stalks
+  for (let i = 0; i < 8; i++) {
+    const sx = (rng() * 24 + 4) | 0;
+    const sy = (rng() * 8 + 18) | 0;
+    const h = (rng() * 6 + 8) | 0;
+    // Stalk
+    ctx.fillStyle = rgbStr(160 + rng() * 30, 140 + rng() * 20, 40);
+    ctx.fillRect(x + sx, y + sy - h, 1, h);
+    // Wheat head
+    ctx.fillStyle = rgbStr(200 + rng() * 40, 180 + rng() * 30, 50);
+    ctx.fillRect(x + sx - 1, y + sy - h - 2, 3, 3);
+    ctx.fillStyle = rgbStr(220, 200, 80);
+    ctx.fillRect(x + sx, y + sy - h - 2, 1, 1);
+  }
+}
+
 // ── Main generator ──
 
 export function generateTileset(scene) {
@@ -553,7 +605,7 @@ export function generateTileset(scene) {
 
   // Add extra machine tiles by extending canvas
   const canvas2 = document.createElement('canvas');
-  canvas2.width = T * (tileCount + 13); // +storage, furnace, 4 chests, 5 underground, 2 stairs
+  canvas2.width = T * (tileCount + 16); // +storage, furnace, 4 chests, 5 underground, 2 stairs, 3 farm
   canvas2.height = T;
   const ctx2 = canvas2.getContext('2d');
   ctx2.drawImage(canvas, 0, 0);
@@ -576,6 +628,10 @@ export function generateTileset(scene) {
   // Stairs (index 28-29 -> 103-104)
   paintStairsDown(ctx2, 28 * T, 0, mulberry32(2500));
   paintStairsUp(ctx2, 29 * T, 0, mulberry32(2600));
+  // Farm tiles (index 30-32 -> 105-107)
+  paintFarmPlot(ctx2, 30 * T, 0, mulberry32(2700));
+  paintFarmGrowing(ctx2, 31 * T, 0, mulberry32(2800));
+  paintFarmReady(ctx2, 32 * T, 0, mulberry32(2900));
 
   // Register as Phaser texture
   if (scene.textures.exists('tileset')) {
@@ -591,7 +647,7 @@ const TILE_INDEX_MAP = {
   0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6,
   7: 7, 8: 8, 9: 9, 10: 10, 11: 11,
   12: 23, 13: 24, 14: 25, 15: 26, 16: 27, // underground tiles
-  100: 12, 101: 13, 102: 14, 103: 28, 104: 29,
+  100: 12, 101: 13, 102: 14, 103: 28, 104: 29, 105: 30, 106: 31, 107: 32,
   200: 15, 201: 16, 202: 17, 203: 18,
   204: 19, 205: 20, 206: 21, 207: 22,
 };

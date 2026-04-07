@@ -42,6 +42,16 @@ RESEARCH_TREE: dict[str, dict] = {
         "unlocks": ["claim_flag"],
     },
 
+    "farming": {
+        "name": "Farming",
+        "desc": "Unlock farm plots to grow wheat. Harvest alien flora for seeds.",
+        "tier": 1, "row": 5, "col": 0,
+        "cost": {"biomass": 10, "wood": 5},
+        "time": 20,
+        "prereqs": ["stone_tools"],
+        "unlocks": ["farm_plot"],
+    },
+
     "underground": {
         "name": "Underground Access",
         "desc": "Unlock stairs to descend into caves and return to the surface.",
