@@ -683,14 +683,13 @@ async def websocket_endpoint(ws: WebSocket):
                 else:
                     pair_z = None
                 if pair_z is not None and MIN_Z <= pair_z <= 0:
-                    dest_tile = world.get_tile(wx, wy, pair_z)
-                    if dest_tile not in SOLID_TILES and dest_tile < 100:
-                        pair_orig = dest_tile
-                        world.set_tile(wx, wy, pair_tile, pair_z)
-                        db.save_world_mod(wx, wy, pair_tile, pair_z)
-                        building_owners[(wx, wy, pair_z)] = {"user_id": user_id, "original_tile": pair_orig}
-                        db.save_building_owner(wx, wy, user_id, pair_orig, pair_z)
-                        await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": pair_z, "tile": pair_tile})
+                    # Force-place paired stair (carve through solid tiles if needed)
+                    pair_orig = world.get_tile(wx, wy, pair_z)
+                    world.set_tile(wx, wy, pair_tile, pair_z)
+                    db.save_world_mod(wx, wy, pair_tile, pair_z)
+                    building_owners[(wx, wy, pair_z)] = {"user_id": user_id, "original_tile": pair_orig}
+                    db.save_building_owner(wx, wy, user_id, pair_orig, pair_z)
+                    await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": pair_z, "tile": pair_tile})
                 await send_json(ws, {"type": "inventory", "inventory": player.inventory_dict()})
                 await send_json(ws, {"type": "build_success", "item": item_name, "wx": wx, "wy": wy})
 
