@@ -667,12 +667,11 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json(ws, {"type": "build_fail", "reason": "already_surface"})
                     continue
 
-                original_tile = world.get_tile(wx, wy, wz)
                 player.remove_items(cost)
                 world.set_tile(wx, wy, tile_id, wz)
                 db.save_world_mod(wx, wy, tile_id, wz)
-                building_owners[(wx, wy, wz)] = {"user_id": user_id, "original_tile": original_tile}
-                db.save_building_owner(wx, wy, user_id, original_tile, wz)
+                building_owners[(wx, wy, wz)] = {"user_id": user_id, "original_tile": current_tile}
+                db.save_building_owner(wx, wy, user_id, current_tile, wz)
                 await broadcast_json({"type": "tile_update", "wx": wx, "wy": wy, "wz": wz, "tile": tile_id})
                 # Auto-pair stairs: place matching stair on adjacent layer
                 if tile_id == STAIRS_DOWN:
