@@ -70,8 +70,25 @@ def init_db() -> None:
     print(f"[DB] Redis connected: {REDIS_CONFIG['host']}")
     # Migrations
     with pg.cursor() as cur:
+        cur.execute("ALTER TABLE player_state ADD COLUMN IF NOT EXISTS hp INTEGER DEFAULT 100")
+        # Fix primary keys to include wz for multi-layer support
         cur.execute("""
-            ALTER TABLE player_state ADD COLUMN IF NOT EXISTS hp INTEGER DEFAULT 100
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'world_mods_pkey'
+                    AND conkey = (SELECT array_agg(attnum) FROM pg_attribute WHERE attrelid = 'world_mods'::regclass AND attname IN ('wx','wy'))
+                ) THEN
+                    ALTER TABLE world_mods DROP CONSTRAINT world_mods_pkey;
+                    ALTER TABLE world_mods ADD PRIMARY KEY (wx, wy, wz);
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'building_owners_pkey'
+                    AND conkey = (SELECT array_agg(attnum) FROM pg_attribute WHERE attrelid = 'building_owners'::regclass AND attname IN ('wx','wy'))
+                ) THEN
+                    ALTER TABLE building_owners DROP CONSTRAINT building_owners_pkey;
+                    ALTER TABLE building_owners ADD PRIMARY KEY (wx, wy, wz);
+                END IF;
+            END $$;
         """)
 
 
