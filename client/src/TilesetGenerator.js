@@ -863,60 +863,178 @@ export function getTileIndex(tileId) {
   return TILE_INDEX_MAP[tileId] ?? 3; // default to dirt
 }
 
+function _drawColonist(gfx, S, colors) {
+  // Detailed sci-fi colonist sprite
+  // colors: { suit, suitDark, suitLight, helmet, visor, boots, skin, outline }
+  const cx = 16 * S; // center x
+  const o = colors.outline;
+
+  // Drop shadow
+  gfx.fillStyle(0x000000, 0.2);
+  gfx.fillEllipse(cx, 29 * S, 14 * S, 4 * S);
+
+  // ── Boots ──
+  gfx.fillStyle(colors.boots, 1);
+  gfx.fillRect((11)*S, (26)*S, (5)*S, (4)*S);  // left boot
+  gfx.fillRect((16)*S, (26)*S, (5)*S, (4)*S);  // right boot
+  // Boot highlight
+  gfx.fillStyle(0xffffff, 0.1);
+  gfx.fillRect((11)*S, (26)*S, (5)*S, S);
+  gfx.fillRect((16)*S, (26)*S, (5)*S, S);
+  // Boot sole
+  gfx.fillStyle(0x000000, 0.3);
+  gfx.fillRect((11)*S, (29)*S, (5)*S, S);
+  gfx.fillRect((16)*S, (29)*S, (5)*S, S);
+
+  // ── Legs ──
+  gfx.fillStyle(colors.suitDark, 1);
+  gfx.fillRect((12)*S, (22)*S, (4)*S, (5)*S);   // left leg
+  gfx.fillRect((16)*S, (22)*S, (4)*S, (5)*S);   // right leg
+  // Inner leg shadow
+  gfx.fillStyle(0x000000, 0.15);
+  gfx.fillRect((15)*S, (22)*S, (2)*S, (5)*S);
+
+  // ── Torso ──
+  gfx.fillStyle(colors.suit, 1);
+  gfx.fillRect((10)*S, (13)*S, (12)*S, (10)*S);
+  // Chest highlight
+  gfx.fillStyle(colors.suitLight, 1);
+  gfx.fillRect((11)*S, (14)*S, (4)*S, (3)*S);
+  // Belt
+  gfx.fillStyle(colors.suitDark, 1);
+  gfx.fillRect((10)*S, (22)*S, (12)*S, (2)*S);
+  // Belt buckle
+  gfx.fillStyle(0xccaa44, 1);
+  gfx.fillRect((15)*S, (22)*S, (2)*S, (2)*S);
+  // Chest panel / badge
+  gfx.fillStyle(0xffffff, 0.15);
+  gfx.fillRect((17)*S, (15)*S, (3)*S, (3)*S);
+  gfx.fillStyle(colors.visorColor || colors.visor, 0.4);
+  gfx.fillRect((17)*S, (15)*S, (3)*S, (1)*S);
+
+  // ── Arms ──
+  // Left arm
+  gfx.fillStyle(colors.suit, 1);
+  gfx.fillRect((7)*S, (14)*S, (3)*S, (8)*S);
+  gfx.fillStyle(colors.suitDark, 1);
+  gfx.fillRect((7)*S, (14)*S, S, (8)*S); // outer shadow
+  // Left hand
+  gfx.fillStyle(colors.skin, 1);
+  gfx.fillRect((7)*S, (22)*S, (3)*S, (2)*S);
+  // Right arm
+  gfx.fillStyle(colors.suit, 1);
+  gfx.fillRect((22)*S, (14)*S, (3)*S, (8)*S);
+  gfx.fillStyle(colors.suitLight, 1);
+  gfx.fillRect((24)*S, (14)*S, S, (8)*S); // outer highlight
+  // Right hand
+  gfx.fillStyle(colors.skin, 1);
+  gfx.fillRect((22)*S, (22)*S, (3)*S, (2)*S);
+  // Shoulder pads
+  gfx.fillStyle(colors.suitLight, 1);
+  gfx.fillRect((8)*S, (13)*S, (4)*S, (2)*S);
+  gfx.fillRect((20)*S, (13)*S, (4)*S, (2)*S);
+
+  // ── Helmet ──
+  gfx.fillStyle(colors.helmet, 1);
+  gfx.fillRoundedRect((10)*S, (3)*S, (12)*S, (11)*S, 3*S);
+  // Helmet highlight
+  gfx.fillStyle(0xffffff, 0.12);
+  gfx.fillRect((11)*S, (4)*S, (6)*S, (2)*S);
+  // Helmet shadow
+  gfx.fillStyle(0x000000, 0.15);
+  gfx.fillRect((10)*S, (12)*S, (12)*S, (2)*S);
+
+  // ── Visor ──
+  gfx.fillStyle(colors.visor, 1);
+  gfx.fillRoundedRect((12)*S, (6)*S, (8)*S, (5)*S, 2*S);
+  // Visor reflection
+  gfx.fillStyle(0xffffff, 0.25);
+  gfx.fillRect((13)*S, (7)*S, (3)*S, (2)*S);
+  // Visor bottom glow
+  gfx.fillStyle(colors.visor, 0.3);
+  gfx.fillRect((13)*S, (11)*S, (6)*S, S);
+
+  // ── Antenna ──
+  gfx.fillStyle(colors.suitDark, 1);
+  gfx.fillRect((20)*S, (1)*S, S, (3)*S);
+  gfx.fillStyle(0xff4444, 1);
+  gfx.fillCircle((20.5)*S, (1)*S, S);
+
+  // ── Outline (subtle dark edge) ──
+  gfx.lineStyle(S * 0.5, o, 0.4);
+  // Head outline
+  gfx.strokeRoundedRect((10)*S, (3)*S, (12)*S, (11)*S, 3*S);
+  // Body outline
+  gfx.strokeRect((10)*S, (13)*S, (12)*S, (11)*S);
+}
+
 export function generatePlayerTextures(scene) {
   const gfx = scene.add.graphics();
-  const S = T / 32; // scale factor from original 32px design
+  const S = T / 32;
 
   // Self player — green sci-fi suit
   gfx.clear();
-  gfx.fillStyle(0x006644, 1);
-  gfx.fillRect(10*S, 10*S, 12*S, 16*S);
-  gfx.fillStyle(0x00ff88, 1);
-  gfx.fillRect(11*S, 4*S, 10*S, 10*S);
-  gfx.fillStyle(0x88ffcc, 1);
-  gfx.fillRect(13*S, 6*S, 6*S, 4*S);
-  gfx.fillStyle(0x005533, 1);
-  gfx.fillRect(7*S, 12*S, 3*S, 10*S);
-  gfx.fillRect(22*S, 12*S, 3*S, 10*S);
-  gfx.fillStyle(0x004422, 1);
-  gfx.fillRect(11*S, 26*S, 4*S, 5*S);
-  gfx.fillRect(17*S, 26*S, 4*S, 5*S);
+  _drawColonist(gfx, S, {
+    suit: 0x007755, suitDark: 0x005544, suitLight: 0x22aa77,
+    helmet: 0x00cc66, visor: 0x88ffcc, visorColor: 0x44ffaa,
+    boots: 0x334433, skin: 0xddbb99, outline: 0x002211,
+  });
   gfx.generateTexture('player_self', T, T);
 
   // Other player — blue suit
   gfx.clear();
-  gfx.fillStyle(0x224466, 1);
-  gfx.fillRect(10*S, 10*S, 12*S, 16*S);
-  gfx.fillStyle(0x4488ff, 1);
-  gfx.fillRect(11*S, 4*S, 10*S, 10*S);
-  gfx.fillStyle(0x88bbff, 1);
-  gfx.fillRect(13*S, 6*S, 6*S, 4*S);
-  gfx.fillStyle(0x1a3355, 1);
-  gfx.fillRect(7*S, 12*S, 3*S, 10*S);
-  gfx.fillRect(22*S, 12*S, 3*S, 10*S);
-  gfx.fillStyle(0x112244, 1);
-  gfx.fillRect(11*S, 26*S, 4*S, 5*S);
-  gfx.fillRect(17*S, 26*S, 4*S, 5*S);
+  _drawColonist(gfx, S, {
+    suit: 0x2255aa, suitDark: 0x1a3366, suitLight: 0x4488cc,
+    helmet: 0x3377dd, visor: 0x88ccff, visorColor: 0x66bbff,
+    boots: 0x2a2a44, skin: 0xddbb99, outline: 0x0a1133,
+  });
   gfx.generateTexture('player_other', T, T);
 
-  // Sheep
+  // Sheep — improved with more wool detail
   gfx.clear();
+  // Shadow
+  gfx.fillStyle(0x000000, 0.15);
+  gfx.fillEllipse(16*S, 26*S, 20*S, 4*S);
+  // Body (wool)
   gfx.fillStyle(0xddddcc, 1);
   gfx.fillEllipse(16*S, 16*S, 22*S, 16*S);
+  // Wool bumps
   gfx.fillStyle(0xeeeedd, 1);
-  gfx.fillCircle(12*S, 13*S, 4*S);
-  gfx.fillCircle(18*S, 11*S, 4*S);
-  gfx.fillCircle(20*S, 15*S, 3*S);
-  gfx.fillCircle(14*S, 17*S, 3*S);
+  gfx.fillCircle(11*S, 12*S, 5*S);
+  gfx.fillCircle(18*S, 10*S, 5*S);
+  gfx.fillCircle(21*S, 14*S, 4*S);
+  gfx.fillCircle(13*S, 17*S, 4*S);
+  gfx.fillCircle(16*S, 19*S, 3*S);
+  // Wool shadow
+  gfx.fillStyle(0xbbbbaa, 1);
+  gfx.fillCircle(14*S, 20*S, 4*S);
+  gfx.fillCircle(20*S, 18*S, 3*S);
+  // Head
   gfx.fillStyle(0x888877, 1);
-  gfx.fillEllipse(6*S, 12*S, 8*S, 7*S);
+  gfx.fillEllipse(6*S, 12*S, 9*S, 8*S);
+  // Ear
+  gfx.fillStyle(0x776666, 1);
+  gfx.fillEllipse(3*S, 8*S, 4*S, 3*S);
+  // Eye
   gfx.fillStyle(0x222222, 1);
   gfx.fillCircle(5*S, 11*S, 1.5*S);
-  gfx.fillStyle(0x665544, 1);
-  gfx.fillRect(10*S, 22*S, 2*S, 6*S);
-  gfx.fillRect(15*S, 22*S, 2*S, 6*S);
-  gfx.fillRect(19*S, 22*S, 2*S, 6*S);
-  gfx.fillRect(23*S, 22*S, 2*S, 6*S);
+  gfx.fillStyle(0xffffff, 1);
+  gfx.fillCircle(4.5*S, 10.5*S, 0.5*S);
+  // Nose
+  gfx.fillStyle(0x665555, 1);
+  gfx.fillCircle(2.5*S, 13*S, S);
+  // Legs
+  gfx.fillStyle(0x554433, 1);
+  gfx.fillRect(9*S, 22*S, 3*S, 7*S);
+  gfx.fillRect(14*S, 22*S, 3*S, 7*S);
+  gfx.fillRect(18*S, 22*S, 3*S, 7*S);
+  gfx.fillRect(23*S, 22*S, 3*S, 7*S);
+  // Hooves
+  gfx.fillStyle(0x332211, 1);
+  gfx.fillRect(9*S, 28*S, 3*S, S);
+  gfx.fillRect(14*S, 28*S, 3*S, S);
+  gfx.fillRect(18*S, 28*S, 3*S, S);
+  gfx.fillRect(23*S, 28*S, 3*S, S);
   gfx.generateTexture('npc_sheep', T, T);
 
   gfx.destroy();
