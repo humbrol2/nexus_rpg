@@ -474,268 +474,308 @@ function paintCrystal(ctx, x, y, rng, crystalColor = null) {
 }
 
 function paintWall(ctx, x, y, rng) {
-  const base = { r: 72, g: 72, b: 82 };
-  // Brick pattern
-  for (let py = 0; py < T; py++) {
-    for (let px = 0; px < T; px++) {
-      const brickRow = (py / 8) | 0;
-      const offset = brickRow % 2 === 0 ? 0 : 8;
-      const brickEdgeX = (px + offset) % 16 < 1;
-      const brickEdgeY = py % 8 < 1;
-      const edge = (brickEdgeX || brickEdgeY) ? -20 : 0;
-      ctx.fillStyle = rgbStr(
-        vary(rng, base.r + edge, 6),
-        vary(rng, base.g + edge, 6),
-        vary(rng, base.b + edge, 8)
-      );
-      ctx.fillRect(x + px, y + py, 1, 1);
+  // Stone brick wall with mortar lines, highlight/shadow per brick
+  const brickH = Math.floor(T / 4);
+  const brickW = Math.floor(T / 2);
+  for (let row = 0; row < 4; row++) {
+    const offset = (row % 2) * Math.floor(brickW / 2);
+    for (let col = -1; col < 3; col++) {
+      const bx = x + col * brickW + offset;
+      const by = y + row * brickH;
+      const shade = 68 + (rng() * 20) | 0;
+      // Brick fill with dither
+      for (let py = 0; py < brickH - 1; py++) {
+        for (let px = 0; px < brickW - 1; px++) {
+          const rx = bx + px, ry = by + py;
+          if (rx < x || rx >= x + T || ry < y || ry >= y + T) continue;
+          const d = ((px + py) % 2 === 0) ? 3 : 0;
+          const hl = py < 2 ? 10 : py > brickH - 4 ? -8 : 0;
+          ctx.fillStyle = rgbStr(shade + hl + d, shade - 4 + hl + d, shade - 10 + hl);
+          ctx.fillRect(rx, ry, 1, 1);
+        }
+      }
+    }
+    // Mortar lines
+    ctx.fillStyle = 'rgba(40,38,35,0.8)';
+    ctx.fillRect(x, y + row * brickH + brickH - 1, T, 1);
+    for (let col = -1; col < 3; col++) {
+      const mx = x + col * brickW + offset + brickW - 1;
+      if (mx >= x && mx < x + T) ctx.fillRect(mx, y + row * brickH, 1, brickH);
     }
   }
+  // Edge shading
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(x, y, T, 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(x, y + T - 2, T, 2);
 }
 
 function paintFloor(ctx, x, y, rng) {
-  // Dirt base under cobblestones
-  const dirt = { r: 75, g: 60, b: 42 };
+  // Cobblestone path — scaled for 64px
+  const dirt = { r: 72, g: 58, b: 40 };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      ctx.fillStyle = rgbStr(vary(rng, dirt.r, 8), vary(rng, dirt.g, 6), vary(rng, dirt.b, 6));
+      ctx.fillStyle = rgbStr(vary(rng, dirt.r, 6), vary(rng, dirt.g, 5), vary(rng, dirt.b, 4));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-
-  // Cobblestones — irregular rounded rectangles
+  // Generate cobblestones scaled to T
+  const S = T / 32;
   const stones = [
     [2, 2, 8, 6], [11, 1, 7, 7], [20, 2, 9, 6],
     [1, 10, 9, 7], [12, 9, 8, 8], [22, 10, 8, 6],
     [3, 19, 7, 7], [12, 18, 9, 6], [23, 19, 7, 7],
     [1, 27, 8, 4], [11, 26, 8, 5], [21, 27, 9, 4],
   ];
-
   for (const [sx, sy, sw, sh] of stones) {
-    const shade = 90 + (rng() * 35) | 0;
-    // Stone fill
-    for (let py = 0; py < sh; py++) {
-      for (let px = 0; px < sw; px++) {
-        // Round corners
-        const corner = (px === 0 && py === 0) || (px === sw-1 && py === 0) ||
-                       (px === 0 && py === sh-1) || (px === sw-1 && py === sh-1);
+    const shade = 88 + (rng() * 40) | 0;
+    const ssx = Math.floor(sx * S), ssy = Math.floor(sy * S);
+    const ssw = Math.floor(sw * S), ssh = Math.floor(sh * S);
+    for (let py = 0; py < ssh; py++) {
+      for (let px = 0; px < ssw; px++) {
+        const corner = (px < 2 && py < 2) || (px >= ssw-2 && py < 2) ||
+                       (px < 2 && py >= ssh-2) || (px >= ssw-2 && py >= ssh-2);
         if (corner) continue;
-
-        const highlight = py < 2 ? 12 : (py > sh - 2 ? -10 : 0);
-        ctx.fillStyle = rgbStr(
-          vary(rng, shade + highlight, 6),
-          vary(rng, shade - 5 + highlight, 6),
-          vary(rng, shade - 10 + highlight, 5)
-        );
-        ctx.fillRect(x + sx + px, y + sy + py, 1, 1);
+        const hl = py < 3 ? 14 : py > ssh - 3 ? -12 : 0;
+        const d = ((px + py) % 2 === 0) ? 4 : 0;
+        ctx.fillStyle = rgbStr(shade + hl + d, shade - 6 + hl + d, shade - 12 + hl);
+        ctx.fillRect(x + ssx + px, y + ssy + py, 1, 1);
       }
     }
   }
-
-  // Subtle border to show it's a placed tile
-  ctx.strokeStyle = 'rgba(180,170,140,0.15)';
+  ctx.strokeStyle = 'rgba(180,170,140,0.12)';
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
 }
 
 function paintChest(ctx, x, y, rng, baseR, baseG, baseB) {
-  // Ground
   paintDirt(ctx, x, y, rng);
-  // Chest body
-  const cx = x + 5, cy = y + 10, cw = 22, ch = 16;
-  ctx.fillStyle = rgbStr(baseR, baseG, baseB);
-  ctx.fillRect(cx, cy, cw, ch);
-  // Lid (slightly lighter)
-  ctx.fillStyle = rgbStr(baseR + 20, baseG + 20, baseB + 15);
-  ctx.fillRect(cx, cy, cw, 6);
-  // Border
-  ctx.strokeStyle = rgbStr(baseR - 30, baseG - 30, baseB - 25);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(cx + 0.5, cy + 0.5, cw - 1, ch - 1);
-  // Lid line
-  ctx.fillStyle = rgbStr(baseR - 20, baseG - 20, baseB - 15);
-  ctx.fillRect(cx + 1, cy + 5, cw - 2, 1);
-  // Lock/latch
-  ctx.fillStyle = rgbStr(200, 180, 80);
-  ctx.fillRect(cx + 9, cy + 4, 4, 4);
-  ctx.fillStyle = rgbStr(160, 140, 50);
-  ctx.fillRect(cx + 10, cy + 5, 2, 2);
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.1)';
-  ctx.fillRect(cx + 2, cy + 1, cw - 4, 3);
+  const S = T / 32;
+  const cx2 = x + Math.floor(5*S), cy2 = y + Math.floor(10*S);
+  const cw = Math.floor(22*S), ch = Math.floor(16*S);
+  const lidH = Math.floor(6*S);
   // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.15)';
-  ctx.fillRect(cx, cy + ch, cw, 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(cx2 + 2, cy2 + ch, cw, Math.floor(3*S));
+  // Body
+  ctx.fillStyle = rgbStr(baseR - 10, baseG - 10, baseB - 8);
+  ctx.fillRect(cx2, cy2, cw, ch);
+  // Lid
+  ctx.fillStyle = rgbStr(baseR + 15, baseG + 15, baseB + 10);
+  ctx.fillRect(cx2, cy2, cw, lidH);
+  // Highlight on lid
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fillRect(cx2 + 2, cy2 + 1, cw - 4, Math.floor(2*S));
+  // Border
+  ctx.strokeStyle = rgbStr(baseR - 35, baseG - 35, baseB - 30);
+  ctx.lineWidth = S;
+  ctx.strokeRect(cx2 + 0.5, cy2 + 0.5, cw - 1, ch - 1);
+  // Lid line
+  ctx.fillStyle = rgbStr(baseR - 25, baseG - 25, baseB - 20);
+  ctx.fillRect(cx2 + 1, cy2 + lidH - 1, cw - 2, S);
+  // Lock
+  const lockW = Math.floor(4*S), lockH = Math.floor(4*S);
+  const lockX = cx2 + (cw - lockW) / 2, lockY = cy2 + lidH - Math.floor(2*S);
+  ctx.fillStyle = rgbStr(210, 190, 90);
+  ctx.fillRect(lockX, lockY, lockW, lockH);
+  ctx.fillStyle = rgbStr(170, 150, 60);
+  ctx.fillRect(lockX + S, lockY + S, lockW - 2*S, lockH - 2*S);
+  // Bottom shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(cx2, cy2 + ch - S, cw, S);
 }
 
 function paintSign(ctx, x, y, rng) {
-  // Dirt base
   paintDirt(ctx, x, y, rng);
-  // Wooden post
-  ctx.fillStyle = rgbStr(90, 65, 35);
-  ctx.fillRect(x + 14, y + 10, 4, 20);
-  // Sign board
-  const boardY = y + 6;
-  ctx.fillStyle = rgbStr(160, 125, 70);
-  ctx.fillRect(x + 5, boardY, 22, 14);
-  // Board border
-  ctx.strokeStyle = rgbStr(100, 75, 40);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x + 5.5, boardY + 0.5, 21, 13);
-  // Text lines (decorative)
-  ctx.fillStyle = rgbStr(60, 45, 25);
-  ctx.fillRect(x + 8, boardY + 3, 16, 1);
-  ctx.fillRect(x + 8, boardY + 6, 14, 1);
-  ctx.fillRect(x + 8, boardY + 9, 10, 1);
-  // Wood grain on post
-  ctx.fillStyle = rgbStr(75, 55, 30);
-  ctx.fillRect(x + 15, y + 14, 1, 3);
-  ctx.fillRect(x + 15, y + 20, 1, 2);
+  const S = T / 32;
+  // Post
+  const postX = x + Math.floor(13*S), postW = Math.floor(6*S);
+  ctx.fillStyle = rgbStr(85, 60, 30);
+  ctx.fillRect(postX, y + Math.floor(10*S), postW, Math.floor(22*S));
+  // Post highlight
+  ctx.fillStyle = rgbStr(100, 75, 42);
+  ctx.fillRect(postX, y + Math.floor(10*S), Math.floor(2*S), Math.floor(22*S));
+  // Board
+  const bx = x + Math.floor(4*S), by = y + Math.floor(4*S);
+  const bw = Math.floor(24*S), bh = Math.floor(16*S);
+  ctx.fillStyle = rgbStr(160, 125, 68);
+  ctx.fillRect(bx, by, bw, bh);
+  // Board edge shading
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(bx, by, bw, S);
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(bx, by + bh - S, bw, S);
+  ctx.strokeStyle = rgbStr(95, 70, 35);
+  ctx.lineWidth = S;
+  ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+  // Text lines
+  ctx.fillStyle = rgbStr(55, 40, 22);
+  for (let i = 0; i < 3; i++) {
+    const lw = bw - Math.floor((6 + i * 4) * S);
+    ctx.fillRect(bx + Math.floor(3*S), by + Math.floor((4 + i * 4) * S), lw, S);
+  }
 }
 
 function paintMachine(ctx, x, y, rng, color, symbol) {
   const c = hexToRgb(color);
-  // Metal base plate
+  const S = T / 32;
+  // Metal body with gradient
   for (let py = 0; py < T; py++) {
+    const grad = (py / T - 0.5) * 30;
     for (let px = 0; px < T; px++) {
-      const highlight = (py < 4) ? 15 : (py > 28) ? -15 : 0;
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, c.r + highlight, 8),
-        vary(rng, c.g + highlight, 8),
-        vary(rng, c.b + highlight, 8)
+        vary(rng, c.r - grad, 5) + d,
+        vary(rng, c.g - grad, 5) + d,
+        vary(rng, c.b - grad, 4) + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Border
-  ctx.strokeStyle = rgbStr(c.r * 0.6, c.g * 0.6, c.b * 0.6);
+  // Border — double line
+  ctx.strokeStyle = rgbStr(c.r * 0.5, c.g * 0.5, c.b * 0.5);
+  ctx.lineWidth = S;
+  ctx.strokeRect(x + S, y + S, T - 2*S, T - 2*S);
+  ctx.strokeStyle = rgbStr(c.r * 0.7, c.g * 0.7, c.b * 0.7);
   ctx.lineWidth = 1;
-  ctx.strokeRect(x + 1.5, y + 1.5, T - 3, T - 3);
-  // Inner details — bolts
-  ctx.fillStyle = rgbStr(c.r * 0.5, c.g * 0.5, c.b * 0.5);
-  ctx.fillRect(x + 3, y + 3, 2, 2);
-  ctx.fillRect(x + T - 5, y + 3, 2, 2);
-  ctx.fillRect(x + 3, y + T - 5, 2, 2);
-  ctx.fillRect(x + T - 5, y + T - 5, 2, 2);
+  ctx.strokeRect(x + 2*S, y + 2*S, T - 4*S, T - 4*S);
+  // Corner bolts
+  const boltR = Math.floor(2*S);
+  for (const [bx2, by2] of [[4*S, 4*S], [T-4*S, 4*S], [4*S, T-4*S], [T-4*S, T-4*S]]) {
+    ctx.fillStyle = rgbStr(c.r * 0.4, c.g * 0.4, c.b * 0.4);
+    ctx.fillRect(x + bx2 - boltR/2, y + by2 - boltR/2, boltR, boltR);
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(x + bx2 - boltR/2, y + by2 - boltR/2, boltR, 1);
+  }
   // Center symbol
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 12px monospace';
+  ctx.font = `bold ${Math.floor(14*S)}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(symbol, x + T / 2, y + T / 2 + 1);
+  ctx.fillText(symbol, x + T / 2, y + T / 2 + S);
+  // Top highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.fillRect(x + 3*S, y + S, T - 6*S, 2*S);
 }
 
 function paintStairsDown(ctx, x, y, rng) {
+  const S = T / 32;
   // Stone base
-  const base = { r: 70, g: 65, b: 58 };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      ctx.fillStyle = rgbStr(vary(rng, base.r, 8), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
+      ctx.fillStyle = rgbStr(vary(rng, 68 + d, 5), vary(rng, 63 + d, 5), vary(rng, 56, 4));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Steps descending (darker toward bottom = going down)
-  const steps = 5;
+  const steps = 6;
   const stepH = Math.floor(T / steps);
   for (let i = 0; i < steps; i++) {
-    const shade = 80 - i * 12;
+    const shade = 85 - i * 10;
     const sy = y + i * stepH;
-    const indent = i * 2;
-    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 10);
-    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - 1);
-    // Step edge highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x + indent, sy, T - indent * 2, 1);
-    // Step shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fillRect(x + indent, sy + stepH - 1, T - indent * 2, 1);
+    const indent = Math.floor(i * 2 * S);
+    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 12);
+    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - S);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(x + indent, sy, T - indent * 2, S);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(x + indent, sy + stepH - S, T - indent * 2, S);
   }
   // Down arrow
-  ctx.fillStyle = 'rgba(255,200,80,0.7)';
-  ctx.fillRect(x + 14, y + 4, 4, 6);
-  ctx.fillRect(x + 12, y + 10, 8, 2);
-  ctx.fillRect(x + 14, y + 12, 4, 2);
+  const ax = T / 2, ay = Math.floor(6 * S);
+  ctx.fillStyle = 'rgba(255,200,80,0.8)';
+  ctx.fillRect(x + ax - 2*S, y + ay, 4*S, 6*S);
+  ctx.fillRect(x + ax - 4*S, y + ay + 6*S, 8*S, 2*S);
+  ctx.fillRect(x + ax - 2*S, y + ay + 8*S, 4*S, 2*S);
 }
 
 function paintStairsUp(ctx, x, y, rng) {
-  // Stone base
-  const base = { r: 70, g: 65, b: 58 };
+  const S = T / 32;
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      ctx.fillStyle = rgbStr(vary(rng, base.r, 8), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
+      ctx.fillStyle = rgbStr(vary(rng, 68 + d, 5), vary(rng, 63 + d, 5), vary(rng, 56, 4));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Steps ascending (lighter toward bottom = going up)
-  const steps = 5;
+  const steps = 6;
   const stepH = Math.floor(T / steps);
   for (let i = 0; i < steps; i++) {
-    const shade = 40 + i * 12;
+    const shade = 38 + i * 10;
     const sy = y + i * stepH;
-    const indent = (steps - 1 - i) * 2;
-    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 10);
-    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - 1);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fillRect(x + indent, sy, T - indent * 2, 1);
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fillRect(x + indent, sy + stepH - 1, T - indent * 2, 1);
+    const indent = Math.floor((steps - 1 - i) * 2 * S);
+    ctx.fillStyle = rgbStr(shade, shade - 5, shade - 12);
+    ctx.fillRect(x + indent, sy, T - indent * 2, stepH - S);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.fillRect(x + indent, sy, T - indent * 2, S);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(x + indent, sy + stepH - S, T - indent * 2, S);
   }
-  // Up arrow
-  ctx.fillStyle = 'rgba(80,220,255,0.7)';
-  ctx.fillRect(x + 14, y + 8, 4, 6);
-  ctx.fillRect(x + 12, y + 6, 8, 2);
-  ctx.fillRect(x + 14, y + 4, 4, 2);
+  const ax = T / 2, ay = Math.floor(6 * S);
+  ctx.fillStyle = 'rgba(80,220,255,0.8)';
+  ctx.fillRect(x + ax - 2*S, y + ay + 4*S, 4*S, 6*S);
+  ctx.fillRect(x + ax - 4*S, y + ay + 2*S, 8*S, 2*S);
+  ctx.fillRect(x + ax - 2*S, y + ay, 4*S, 2*S);
 }
 
 function paintFarmPlot(ctx, x, y, rng) {
-  const base = { r: 70, g: 50, b: 25 };
+  const S = T / 32;
+  // Rich tilled soil
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      ctx.fillStyle = rgbStr(vary(rng, base.r, 10), vary(rng, base.g, 8), vary(rng, base.b, 6));
+      const d = ((px + py) % 2 === 0) ? 4 : 0;
+      ctx.fillStyle = rgbStr(vary(rng, 68 + d, 6), vary(rng, 48 + d, 5), vary(rng, 22, 4));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Furrow lines
-  for (let row = 0; row < 4; row++) {
-    const fy = y + 4 + row * 8;
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    ctx.fillRect(x + 2, fy, T - 4, 1);
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    ctx.fillRect(x + 2, fy + 1, T - 4, 1);
+  // Furrow lines — more rows for 64px
+  const furrows = Math.floor(T / (4 * S));
+  for (let row = 0; row < furrows; row++) {
+    const fy = y + Math.floor(3*S) + row * Math.floor(4*S);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(x + Math.floor(2*S), fy, T - Math.floor(4*S), S);
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(x + Math.floor(2*S), fy + S, T - Math.floor(4*S), S);
   }
-  ctx.strokeStyle = 'rgba(100,80,40,0.3)';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(100,80,40,0.35)';
+  ctx.lineWidth = S;
   ctx.strokeRect(x + 0.5, y + 0.5, T - 1, T - 1);
 }
 
 function paintFarmGrowing(ctx, x, y, rng) {
   paintFarmPlot(ctx, x, y, rng);
-  // Small seedlings
-  for (let i = 0; i < 6; i++) {
-    const sx = (rng() * 22 + 5) | 0;
-    const sy = (rng() * 14 + 14) | 0;
-    ctx.fillStyle = rgbStr(50 + rng() * 30, 100 + rng() * 40, 30);
-    ctx.fillRect(x + sx, y + sy - 4, 1, 4);
-    ctx.fillStyle = rgbStr(60 + rng() * 20, 120 + rng() * 30, 40);
-    ctx.fillRect(x + sx - 1, y + sy - 5, 3, 2);
+  const S = T / 32;
+  // Seedlings — more and taller for 64px
+  for (let i = 0; i < 12; i++) {
+    const sx = (rng() * (T - 10*S) + 5*S) | 0;
+    const sy = (rng() * (T * 0.4) + T * 0.45) | 0;
+    const h = Math.floor((rng() * 4 + 3) * S);
+    // Stem
+    ctx.fillStyle = rgbStr(45 + rng() * 30, 90 + rng() * 40, 28);
+    ctx.fillRect(x + sx, y + sy - h, S, h);
+    // Leaves
+    ctx.fillStyle = rgbStr(55 + rng() * 25, 115 + rng() * 35, 35);
+    ctx.fillRect(x + sx - S, y + sy - h - S, 3*S, 2*S);
   }
 }
 
 function paintFarmReady(ctx, x, y, rng) {
   paintFarmPlot(ctx, x, y, rng);
-  // Tall wheat stalks
-  for (let i = 0; i < 8; i++) {
-    const sx = (rng() * 24 + 4) | 0;
-    const sy = (rng() * 8 + 18) | 0;
-    const h = (rng() * 6 + 8) | 0;
+  const S = T / 32;
+  // Tall golden wheat
+  for (let i = 0; i < 16; i++) {
+    const sx = (rng() * (T - 8*S) + 4*S) | 0;
+    const sy = (rng() * (T * 0.25) + T * 0.55) | 0;
+    const h = Math.floor((rng() * 6 + 10) * S);
     // Stalk
-    ctx.fillStyle = rgbStr(160 + rng() * 30, 140 + rng() * 20, 40);
-    ctx.fillRect(x + sx, y + sy - h, 1, h);
-    // Wheat head
-    ctx.fillStyle = rgbStr(200 + rng() * 40, 180 + rng() * 30, 50);
-    ctx.fillRect(x + sx - 1, y + sy - h - 2, 3, 3);
-    ctx.fillStyle = rgbStr(220, 200, 80);
-    ctx.fillRect(x + sx, y + sy - h - 2, 1, 1);
+    ctx.fillStyle = rgbStr(155 + rng() * 35, 135 + rng() * 25, 35);
+    ctx.fillRect(x + sx, y + sy - h, S, h);
+    // Wheat head — larger
+    ctx.fillStyle = rgbStr(200 + rng() * 45, 175 + rng() * 35, 45);
+    ctx.fillRect(x + sx - S, y + sy - h - 3*S, 3*S, 4*S);
+    // Highlight
+    ctx.fillStyle = rgbStr(230, 210, 85);
+    ctx.fillRect(x + sx, y + sy - h - 3*S, S, S);
   }
 }
 
