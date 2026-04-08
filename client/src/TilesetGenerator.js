@@ -31,278 +31,445 @@ function vary(rng, base, amount) {
   return Math.max(0, Math.min(255, base + (rng() - 0.5) * amount));
 }
 
-// ── Individual tile painters ──
+// ── Helpers for 16-bit style ──
+
+function dither(rng, val, amount) {
+  // Ordered dither: adds texture without pure noise
+  return val + (rng() > 0.5 ? amount : -amount);
+}
+
+function drawShadedRect(ctx, x, y, w, h, r, g, b, rng) {
+  // Filled rect with top highlight and bottom shadow
+  ctx.fillStyle = rgbStr(r, g, b);
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = `rgba(255,255,255,0.15)`;
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillStyle = `rgba(0,0,0,0.2)`;
+  ctx.fillRect(x, y + h - 1, w, 1);
+}
+
+// ── Individual tile painters (16-bit SNES style) ──
 
 function paintDeepWater(ctx, x, y, rng) {
-  const base = { r: 18, g: 32, b: 62 };
-  // Dark water with subtle ripples
+  // Deep ocean — dark with layered wave patterns
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      const wave = Math.sin((px + py * 0.5) * 0.4) * 8;
+      const wave1 = Math.sin((px + py * 0.7) * 0.35) * 6;
+      const wave2 = Math.sin((px * 0.6 - py * 0.4) * 0.5) * 4;
+      const depth = py / T * 8; // darker at bottom
+      const d = (px + py) % 3 === 0 ? 3 : 0; // subtle dither pattern
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r + wave, 10),
-        vary(rng, base.g + wave, 10),
-        vary(rng, base.b + wave * 1.5, 15)
+        12 + wave1 + d,
+        24 + wave1 + wave2 - depth,
+        52 + wave2 * 2 - depth + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
+  }
+  // Subtle foam streaks
+  for (let i = 0; i < 3; i++) {
+    const fy = (rng() * 28 + 2) | 0;
+    const fx = (rng() * 16 + 4) | 0;
+    const fw = (rng() * 8 + 4) | 0;
+    ctx.fillStyle = 'rgba(40,60,100,0.4)';
+    ctx.fillRect(x + fx, y + fy, fw, 1);
   }
 }
 
 function paintWater(ctx, x, y, rng) {
-  const base = { r: 34, g: 62, b: 102 };
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      const wave = Math.sin((px * 0.3 + py * 0.2)) * 12;
-      const sparkle = rng() > 0.96 ? 30 : 0;
+      const wave1 = Math.sin((px * 0.4 + py * 0.25) * 1.2) * 10;
+      const wave2 = Math.cos((px * 0.2 - py * 0.3) * 0.8) * 6;
+      const d = ((px + py) % 2 === 0) ? 4 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r + wave, 8) + sparkle,
-        vary(rng, base.g + wave, 8) + sparkle,
-        vary(rng, base.b + wave * 1.5, 12) + sparkle
+        28 + wave1 + d,
+        55 + wave1 + wave2,
+        95 + wave2 * 1.5 + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
+  }
+  // Sparkle highlights
+  for (let i = 0; i < 5; i++) {
+    const sx = (rng() * 28 + 2) | 0;
+    const sy = (rng() * 28 + 2) | 0;
+    ctx.fillStyle = 'rgba(140,180,220,0.5)';
+    ctx.fillRect(x + sx, y + sy, 1, 1);
+    ctx.fillStyle = 'rgba(180,210,240,0.3)';
+    ctx.fillRect(x + sx + 1, y + sy, 1, 1);
   }
 }
 
 function paintSand(ctx, x, y, rng) {
-  const base = { r: 194, g: 178, b: 128 };
+  // Warm sand with wind ripples and dithered texture
   for (let py = 0; py < T; py++) {
+    const ripple = Math.sin(py * 0.6) * 4;
     for (let px = 0; px < T; px++) {
-      const grain = rng() > 0.85 ? 15 : 0;
+      const d = ((px + py) % 2 === 0) ? 6 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r, 12) + grain,
-        vary(rng, base.g, 10) + grain,
-        vary(rng, base.b, 14)
+        vary(rng, 190 + ripple, 8) + d,
+        vary(rng, 174 + ripple * 0.8, 6) + d,
+        vary(rng, 120, 10)
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Occasional pebble
-  if (rng() > 0.5) {
-    ctx.fillStyle = rgbStr(160, 150, 110);
-    const px = (rng() * 24 + 4) | 0;
-    const py = (rng() * 24 + 4) | 0;
-    ctx.fillRect(x + px, y + py, 2, 2);
+  // Pebbles with shadow
+  for (let i = 0; i < 3; i++) {
+    if (rng() > 0.35) {
+      const px = (rng() * 24 + 4) | 0;
+      const py = (rng() * 24 + 4) | 0;
+      ctx.fillStyle = rgbStr(155, 145, 105);
+      ctx.fillRect(x + px, y + py, 2, 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(x + px, y + py, 2, 1);
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.fillRect(x + px, y + py + 2, 2, 1);
+    }
+  }
+  // Occasional shell
+  if (rng() > 0.7) {
+    const sx = (rng() * 22 + 5) | 0;
+    const sy = (rng() * 22 + 5) | 0;
+    ctx.fillStyle = rgbStr(220, 210, 190);
+    ctx.fillRect(x + sx, y + sy, 3, 2);
+    ctx.fillStyle = rgbStr(200, 185, 160);
+    ctx.fillRect(x + sx + 1, y + sy + 1, 1, 1);
   }
 }
 
 function paintDirt(ctx, x, y, rng, baseR = 90, baseG = 65, baseB = 38) {
-  const base = { r: baseR, g: baseG, b: baseB };
+  // Rich soil with layered texture
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
+      const layer = Math.sin(py * 0.4 + px * 0.1) * 5;
+      const d = ((px + py) % 3 === 0) ? 5 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r, 16),
-        vary(rng, base.g, 12),
-        vary(rng, base.b, 10)
+        vary(rng, baseR + layer, 10) + d,
+        vary(rng, baseG + layer * 0.7, 8) + d,
+        vary(rng, baseB, 6)
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Small rocks
-  for (let i = 0; i < 3; i++) {
-    if (rng() > 0.4) {
-      ctx.fillStyle = rgbStr(70 + rng() * 20, 55 + rng() * 15, 35 + rng() * 10);
-      ctx.fillRect(x + (rng() * 28 + 2) | 0, y + (rng() * 28 + 2) | 0, 2, 1);
+  // Small rocks with highlights
+  for (let i = 0; i < 4; i++) {
+    if (rng() > 0.3) {
+      const rx = (rng() * 26 + 3) | 0;
+      const ry = (rng() * 26 + 3) | 0;
+      const rw = (rng() * 2 + 2) | 0;
+      ctx.fillStyle = rgbStr(65 + rng() * 25, 50 + rng() * 20, 30 + rng() * 15);
+      ctx.fillRect(x + rx, y + ry, rw, 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fillRect(x + rx, y + ry, rw, 1);
+    }
+  }
+  // Worm trail
+  if (rng() > 0.6) {
+    const wx = (rng() * 20 + 6) | 0;
+    const wy = (rng() * 20 + 6) | 0;
+    ctx.fillStyle = rgbStr(baseR - 12, baseG - 10, baseB - 6);
+    for (let i = 0; i < 5; i++) {
+      ctx.fillRect(x + wx + i * 2, y + wy + ((i % 2) ? 1 : 0), 2, 1);
     }
   }
 }
 
 function paintAlienGrass(ctx, x, y, rng) {
-  // Purple-green alien grass
-  const base = { r: 42, g: 88, b: 48 };
+  // Lush alien ground with color variation patches
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      const tint = rng() > 0.9 ? 12 : 0; // occasional bright spot
+      const patch = Math.sin(px * 0.3 + py * 0.4) * 8;
+      const d = ((px + py) % 2 === 0) ? 4 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r, 14) + tint,
-        vary(rng, base.g, 18) + tint,
-        vary(rng, base.b + (rng() > 0.8 ? 15 : 0), 12)
+        vary(rng, 36 + patch, 8) + d,
+        vary(rng, 82 + patch * 1.5, 10),
+        vary(rng, 40, 8) + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Grass blades
-  for (let i = 0; i < 6; i++) {
+  // Grass tufts — multi-height blades with shading
+  for (let i = 0; i < 10; i++) {
     const gx = (rng() * 28 + 2) | 0;
-    const gy = (rng() * 20 + 8) | 0;
-    ctx.fillStyle = rgbStr(50 + rng() * 20, 110 + rng() * 30, 55 + rng() * 20);
-    ctx.fillRect(x + gx, y + gy, 1, 3);
-    ctx.fillRect(x + gx, y + gy - 1, 1, 1);
+    const gy = (rng() * 16 + 12) | 0;
+    const h = (rng() * 4 + 3) | 0;
+    const bright = 90 + rng() * 50;
+    // Dark side
+    ctx.fillStyle = rgbStr(30, bright * 0.7, 35);
+    ctx.fillRect(x + gx, y + gy - h, 1, h);
+    // Light tip
+    ctx.fillStyle = rgbStr(50, bright, 50 + rng() * 20);
+    ctx.fillRect(x + gx, y + gy - h, 1, 2);
+    // Secondary blade
+    if (rng() > 0.4) {
+      ctx.fillStyle = rgbStr(35, bright * 0.8, 40);
+      ctx.fillRect(x + gx + 1, y + gy - h + 1, 1, h - 1);
+    }
+  }
+  // Small flowers
+  if (rng() > 0.5) {
+    const fx = (rng() * 24 + 4) | 0;
+    const fy = (rng() * 16 + 6) | 0;
+    ctx.fillStyle = rgbStr(180 + rng() * 60, 80 + rng() * 80, 200 + rng() * 55);
+    ctx.fillRect(x + fx, y + fy, 2, 2);
+    ctx.fillStyle = rgbStr(240, 220, 80);
+    ctx.fillRect(x + fx, y + fy, 1, 1);
   }
 }
 
 function paintRock(ctx, x, y, rng) {
-  const base = { r: 95, g: 95, b: 90 };
+  // Multi-layered rock with geological strata
   for (let py = 0; py < T; py++) {
+    const stratum = Math.floor(py / 6);
+    const stratumShift = (stratum % 3) * 5 - 5;
     for (let px = 0; px < T; px++) {
-      const crack = (Math.abs(Math.sin(px * 1.2 + py * 0.8)) < 0.1) ? -15 : 0;
+      const crack = Math.abs(Math.sin(px * 1.2 + py * 0.8));
+      const crackDark = crack < 0.08 ? -20 : 0;
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r + crack, 12),
-        vary(rng, base.g + crack, 12),
-        vary(rng, base.b + crack, 10)
+        vary(rng, 90 + stratumShift + crackDark, 6) + d,
+        vary(rng, 88 + stratumShift + crackDark, 6) + d,
+        vary(rng, 82 + crackDark, 5) + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Highlight edge
-  ctx.fillStyle = 'rgba(255,255,255,0.06)';
-  ctx.fillRect(x, y, T, 2);
-  ctx.fillRect(x, y, 2, T);
-  // Shadow edge
-  ctx.fillStyle = 'rgba(0,0,0,0.1)';
-  ctx.fillRect(x, y + T - 2, T, 2);
-  ctx.fillRect(x + T - 2, y, 2, T);
+  // Top-left highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(x, y, T, 1);
+  ctx.fillRect(x, y, 1, T);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(x + 1, y + 1, T - 2, 1);
+  // Bottom-right shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(x, y + T - 1, T, 1);
+  ctx.fillRect(x + T - 1, y, 1, T);
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.fillRect(x + 1, y + T - 2, T - 2, 1);
+  // Moss patches
+  for (let i = 0; i < 2; i++) {
+    if (rng() > 0.4) {
+      const mx = (rng() * 20 + 4) | 0;
+      const my = (rng() * 8 + 2) | 0;
+      ctx.fillStyle = rgbStr(55, 80 + rng() * 20, 45);
+      ctx.fillRect(x + mx, y + my, 3, 2);
+    }
+  }
 }
 
 function paintDenseRock(ctx, x, y, rng, baseR = 58, baseG = 56, baseB = 54) {
-  const base = { r: baseR, g: baseG, b: baseB };
+  // Dark dense rock with faceted look
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
+      const facet = Math.floor((px + py * 1.3) / 8) % 3;
+      const shift = facet * 4 - 4;
+      const d = ((px + py) % 3 === 0) ? 3 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r, 8),
-        vary(rng, base.g, 8),
-        vary(rng, base.b, 8)
+        vary(rng, baseR + shift, 5) + d,
+        vary(rng, baseG + shift, 5) + d,
+        vary(rng, baseB + shift, 4) + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Cracks
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x + 8, y + 4);
-  ctx.lineTo(x + 16, y + 14);
-  ctx.lineTo(x + 24, y + 10);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x + 4, y + 20);
-  ctx.lineTo(x + 14, y + 26);
-  ctx.stroke();
-  // Highlight/shadow
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  ctx.fillRect(x, y, T, 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.15)';
-  ctx.fillRect(x, y + T - 2, T, 2);
+  // Deep cracks with shadow and highlight
+  const cracks = [
+    [[8, 3], [14, 12], [22, 9]],
+    [[3, 18], [12, 24], [18, 22]],
+  ];
+  for (const crack of cracks) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + crack[0][0], y + crack[0][1]);
+    for (let i = 1; i < crack.length; i++) ctx.lineTo(x + crack[i][0], y + crack[i][1]);
+    ctx.stroke();
+    // Highlight edge
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.moveTo(x + crack[0][0], y + crack[0][1] - 1);
+    for (let i = 1; i < crack.length; i++) ctx.lineTo(x + crack[i][0], y + crack[i][1] - 1);
+    ctx.stroke();
+  }
+  // Edge shading
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(x, y, T, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(x, y + T - 1, T, 1);
 }
 
 function paintOre(ctx, x, y, rng, oreColor) {
-  // Rock base
-  const base = { r: 80, g: 78, b: 74 };
+  // Rock base with richer texture
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
       ctx.fillStyle = rgbStr(
-        vary(rng, base.r, 10),
-        vary(rng, base.g, 10),
-        vary(rng, base.b, 8)
+        vary(rng, 78, 6) + d,
+        vary(rng, 75, 6) + d,
+        vary(rng, 70, 5) + d
       );
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Ore veins
+  // Ore veins — larger clusters with depth
   const oc = hexToRgb(oreColor);
-  for (let i = 0; i < 8; i++) {
-    const vx = (rng() * 24 + 4) | 0;
-    const vy = (rng() * 24 + 4) | 0;
-    const size = (rng() * 3 + 2) | 0;
-    ctx.fillStyle = rgbStr(oc.r, oc.g, oc.b, 0.9);
-    ctx.fillRect(x + vx, y + vy, size, size - 1);
-    // Sparkle
+  for (let i = 0; i < 6; i++) {
+    const vx = (rng() * 22 + 5) | 0;
+    const vy = (rng() * 22 + 5) | 0;
+    const w = (rng() * 4 + 2) | 0;
+    const h = (rng() * 3 + 2) | 0;
+    // Dark outline
+    ctx.fillStyle = rgbStr(oc.r * 0.5, oc.g * 0.5, oc.b * 0.5);
+    ctx.fillRect(x + vx - 1, y + vy - 1, w + 2, h + 2);
+    // Ore body
+    ctx.fillStyle = rgbStr(oc.r, oc.g, oc.b);
+    ctx.fillRect(x + vx, y + vy, w, h);
+    // Highlight
     ctx.fillStyle = rgbStr(
-      Math.min(255, oc.r + 60),
-      Math.min(255, oc.g + 60),
-      Math.min(255, oc.b + 60)
+      Math.min(255, oc.r + 70),
+      Math.min(255, oc.g + 70),
+      Math.min(255, oc.b + 70)
     );
-    ctx.fillRect(x + vx + 1, y + vy, 1, 1);
+    ctx.fillRect(x + vx, y + vy, w, 1);
+    ctx.fillRect(x + vx, y + vy, 1, h);
+    // Sparkle
+    if (rng() > 0.3) {
+      ctx.fillStyle = rgbStr(255, 255, 240);
+      ctx.fillRect(x + vx + 1, y + vy + 1, 1, 1);
+    }
   }
 }
 
 function paintAlienFlora(ctx, x, y, rng) {
-  // Grass base
   paintAlienGrass(ctx, x, y, rng);
-  // Alien plants — bioluminescent
-  for (let i = 0; i < 3; i++) {
+  // Bioluminescent alien plants — taller, with glow halos
+  for (let i = 0; i < 4; i++) {
     const px = (rng() * 22 + 5) | 0;
-    const py = (rng() * 16 + 10) | 0;
-    const h = (rng() * 6 + 4) | 0;
-    // Stem
-    ctx.fillStyle = rgbStr(30, 100 + rng() * 40, 50);
-    ctx.fillRect(x + px, y + py - h, 1, h);
-    // Glowing top
-    ctx.fillStyle = rgbStr(40 + rng() * 30, 200 + rng() * 55, 100 + rng() * 40);
-    ctx.fillRect(x + px - 1, y + py - h - 1, 3, 2);
-    // Glow effect
-    ctx.fillStyle = 'rgba(60,255,140,0.08)';
+    const py = (rng() * 12 + 14) | 0;
+    const h = (rng() * 7 + 5) | 0;
+    const hue = rng();
+    // Stem with gradient
+    for (let s = 0; s < h; s++) {
+      const t = s / h;
+      ctx.fillStyle = rgbStr(25 + t * 15, 80 + t * 40, 40 + t * 20);
+      ctx.fillRect(x + px, y + py - s, 1, 1);
+    }
+    // Glowing bulb (3x3 with soft edges)
+    const br = hue > 0.5 ? 60 : 30;
+    const bg = hue > 0.5 ? 220 : 200;
+    const bb = hue > 0.5 ? 120 : 220;
+    // Glow halo
+    ctx.fillStyle = rgbStr(br, bg, bb, 0.06);
     ctx.fillRect(x + px - 3, y + py - h - 3, 7, 6);
+    ctx.fillStyle = rgbStr(br, bg, bb, 0.12);
+    ctx.fillRect(x + px - 2, y + py - h - 2, 5, 4);
+    // Bulb
+    ctx.fillStyle = rgbStr(br + 40, bg, bb);
+    ctx.fillRect(x + px - 1, y + py - h - 1, 3, 3);
+    ctx.fillStyle = rgbStr(br + 80, Math.min(255, bg + 30), bb + 20);
+    ctx.fillRect(x + px, y + py - h, 1, 1);
   }
 }
 
 function paintAlienTree(ctx, x, y, rng) {
-  // Grass base
   paintAlienGrass(ctx, x, y, rng);
-  // Trunk
-  const trunkX = 12 + (rng() * 8) | 0;
-  const trunkW = 4 + (rng() * 3) | 0;
-  const trunkH = 12 + (rng() * 6) | 0;
-  ctx.fillStyle = rgbStr(50 + rng() * 20, 35 + rng() * 15, 20 + rng() * 10);
-  ctx.fillRect(x + trunkX, y + T - trunkH, trunkW, trunkH);
-  // Bark detail
-  ctx.fillStyle = rgbStr(35, 25, 15);
-  ctx.fillRect(x + trunkX + 1, y + T - trunkH + 3, 1, 2);
-  ctx.fillRect(x + trunkX + 2, y + T - trunkH + 7, 1, 2);
-  // Canopy — alien purple-green
-  const canopyR = 8 + (rng() * 4) | 0;
-  const canopyCX = trunkX + trunkW / 2;
-  const canopyCY = T - trunkH - canopyR + 4;
-  for (let dy = -canopyR; dy <= canopyR; dy++) {
+  // Trunk with bark texture
+  const trunkX = 12 + (rng() * 6) | 0;
+  const trunkW = 5 + (rng() * 2) | 0;
+  const trunkH = 14 + (rng() * 4) | 0;
+  for (let ty = 0; ty < trunkH; ty++) {
+    for (let tx = 0; tx < trunkW; tx++) {
+      const bark = (ty % 4 < 1) ? -8 : 0;
+      const edge = (tx === 0) ? -12 : (tx === trunkW - 1) ? -8 : 0;
+      ctx.fillStyle = rgbStr(48 + edge + bark + rng() * 10, 34 + edge + bark + rng() * 8, 18 + rng() * 6);
+      ctx.fillRect(x + trunkX + tx, y + T - trunkH + ty, 1, 1);
+    }
+  }
+  // Root bulges
+  ctx.fillStyle = rgbStr(42, 30, 16);
+  ctx.fillRect(x + trunkX - 1, y + T - 3, 1, 3);
+  ctx.fillRect(x + trunkX + trunkW, y + T - 2, 1, 2);
+
+  // Canopy — multi-layered with depth
+  const canopyR = 9 + (rng() * 3) | 0;
+  const cx = trunkX + trunkW / 2;
+  const cy = T - trunkH - canopyR + 5;
+  // Shadow layer
+  for (let dy = -canopyR; dy <= canopyR + 1; dy++) {
     for (let dx = -canopyR; dx <= canopyR; dx++) {
-      if (dx * dx + dy * dy <= canopyR * canopyR) {
-        const px = x + canopyCX + dx;
-        const py = y + canopyCY + dy;
-        if (px >= x && px < x + T && py >= y && py < y + T) {
-          ctx.fillStyle = rgbStr(
-            20 + rng() * 30,
-            80 + rng() * 60 + (dy < 0 ? 15 : 0),
-            40 + rng() * 40 + (rng() > 0.85 ? 30 : 0)
-          );
-          ctx.fillRect(px, py, 1, 1);
+      if (dx * dx + dy * dy <= (canopyR + 1) * (canopyR + 1)) {
+        const px2 = x + cx + dx; const py2 = y + cy + dy + 1;
+        if (px2 >= x && px2 < x + T && py2 >= y && py2 < y + T) {
+          ctx.fillStyle = 'rgba(0,0,0,0.15)';
+          ctx.fillRect(px2, py2, 1, 1);
         }
       }
     }
   }
-  // Highlight on top of canopy
-  ctx.fillStyle = 'rgba(100,255,120,0.1)';
-  ctx.fillRect(x + canopyCX - 3, y + canopyCY - canopyR, 6, 3);
+  // Main canopy
+  for (let dy = -canopyR; dy <= canopyR; dy++) {
+    for (let dx = -canopyR; dx <= canopyR; dx++) {
+      if (dx * dx + dy * dy <= canopyR * canopyR) {
+        const px2 = x + cx + dx; const py2 = y + cy + dy;
+        if (px2 >= x && px2 < x + T && py2 >= y && py2 < y + T) {
+          const light = dy < -canopyR * 0.3 ? 20 : dy > canopyR * 0.3 ? -15 : 0;
+          const d = ((dx + dy) % 2 === 0) ? 6 : 0;
+          ctx.fillStyle = rgbStr(
+            18 + rng() * 25 + d,
+            75 + rng() * 50 + light,
+            35 + rng() * 35 + (rng() > 0.9 ? 25 : 0)
+          );
+          ctx.fillRect(px2, py2, 1, 1);
+        }
+      }
+    }
+  }
+  // Canopy highlight
+  ctx.fillStyle = 'rgba(120,255,140,0.12)';
+  ctx.fillRect(x + cx - 4, y + cy - canopyR, 8, 2);
 }
 
 function paintCrystal(ctx, x, y, rng, crystalColor = null) {
   const cc = crystalColor ? hexToRgb(crystalColor) : null;
-  // Dark ground base
-  const base = { r: 35, g: 40, b: 50 };
+  // Dark rocky ground
   for (let py = 0; py < T; py++) {
     for (let px = 0; px < T; px++) {
-      ctx.fillStyle = rgbStr(vary(rng, base.r, 8), vary(rng, base.g, 8), vary(rng, base.b, 10));
+      const d = ((px + py) % 2 === 0) ? 3 : 0;
+      ctx.fillStyle = rgbStr(vary(rng, 32 + d, 5), vary(rng, 36 + d, 5), vary(rng, 45, 6));
       ctx.fillRect(x + px, y + py, 1, 1);
     }
   }
-  // Crystal formations
-  for (let i = 0; i < 4; i++) {
-    const cx = (rng() * 20 + 6) | 0;
-    const cy = (rng() * 14 + 12) | 0;
-    const h = (rng() * 8 + 5) | 0;
+  // Crystal formations — faceted with light/dark sides
+  for (let i = 0; i < 5; i++) {
+    const cx2 = (rng() * 20 + 6) | 0;
+    const cy2 = (rng() * 12 + 14) | 0;
+    const h = (rng() * 9 + 5) | 0;
     const w = (rng() * 2 + 2) | 0;
-    // Crystal body
-    const bright = 160 + rng() * 80;
-    ctx.fillStyle = cc
-      ? rgbStr(cc.r * (bright/255), cc.g * (bright/255), cc.b * (bright/255))
-      : rgbStr(bright * 0.5, bright * 0.8, bright);
-    ctx.fillRect(x + cx, y + cy - h, w, h);
-    // Tip
-    ctx.fillStyle = rgbStr(200, 230, 255);
-    ctx.fillRect(x + cx, y + cy - h, w, 1);
-    // Glow
-    ctx.fillStyle = 'rgba(120,200,240,0.1)';
-    ctx.fillRect(x + cx - 2, y + cy - h - 2, w + 4, h + 4);
+    const bright = 0.6 + rng() * 0.4;
+    const cr = cc ? cc.r * bright : 80 * bright;
+    const cg = cc ? cc.g * bright : 160 * bright;
+    const cb = cc ? cc.b * bright : 220 * bright;
+    // Glow halo
+    ctx.fillStyle = rgbStr(cr, cg, cb, 0.06);
+    ctx.fillRect(x + cx2 - 2, y + cy2 - h - 2, w + 4, h + 4);
+    // Dark side
+    ctx.fillStyle = rgbStr(cr * 0.5, cg * 0.5, cb * 0.5);
+    ctx.fillRect(x + cx2 + w - 1, y + cy2 - h, 1, h);
+    // Light side
+    ctx.fillStyle = rgbStr(cr, cg, cb);
+    ctx.fillRect(x + cx2, y + cy2 - h, w - 1, h);
+    // Bright highlight
+    ctx.fillStyle = rgbStr(
+      Math.min(255, cr + 80),
+      Math.min(255, cg + 80),
+      Math.min(255, cb + 80)
+    );
+    ctx.fillRect(x + cx2, y + cy2 - h, 1, 2);
+    // Tip sparkle
+    ctx.fillStyle = rgbStr(230, 245, 255);
+    ctx.fillRect(x + cx2, y + cy2 - h, 1, 1);
   }
 }
 
