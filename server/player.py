@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 
 from world import CHUNK_SIZE
+from item_registry import TILE_PX
 
 
 @dataclass
@@ -31,11 +32,11 @@ class Player:
 
     @property
     def chunk_x(self) -> int:
-        return int(self.x // (CHUNK_SIZE * 32))
+        return int(self.x // (CHUNK_SIZE * TILE_PX))
 
     @property
     def chunk_y(self) -> int:
-        return int(self.y // (CHUNK_SIZE * 32))
+        return int(self.y // (CHUNK_SIZE * TILE_PX))
 
     @property
     def chunk_z(self) -> int:
@@ -85,8 +86,8 @@ class PlayerManager:
     def add_player(self, ws_id: str, name: str = "") -> Player:
         player = Player(
             id=ws_id,
-            x=CHUNK_SIZE * 32 * 0.5,
-            y=CHUNK_SIZE * 32 * 0.5,
+            x=CHUNK_SIZE * TILE_PX * 0.5,
+            y=CHUNK_SIZE * TILE_PX * 0.5,
             name=name or f"Colonist-{ws_id[:6]}",
         )
         self._players[ws_id] = player

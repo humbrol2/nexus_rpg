@@ -292,7 +292,7 @@ CRAFTING_MENU = [
 #  ZONES — world area definitions
 # ══════════════════════════════════════════════════════════════════
 
-TILE_PX = 32
+TILE_PX = 64
 CHUNK_SIZE = 64
 # Spawn point in world pixel coordinates
 SPAWN_X = CHUNK_SIZE * TILE_PX * 0.5  # center of chunk 0,0

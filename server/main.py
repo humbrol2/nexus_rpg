@@ -38,7 +38,7 @@ import database as db
 from research import PlayerResearch, RESEARCH_TREE, get_tree_for_client
 from npcs import NPCManager, ANIMAL_TYPES
 
-TILE_PX = 32
+TILE_PX = 64
 UPS = 10
 TICK_INTERVAL = 1.0 / UPS
 CHUNK_LOAD_RADIUS = 2
@@ -1064,8 +1064,8 @@ async def websocket_endpoint(ws: WebSocket):
                 if direction not in (-1, 1):
                     continue
                 # Must be standing on the correct stair tile
-                ptx = int(player.x // 32)
-                pty = int(player.y // 32)
+                ptx = int(player.x // TILE_PX)
+                pty = int(player.y // TILE_PX)
                 current_tile = world.get_tile(ptx, pty, player.z)
                 if direction == -1 and current_tile != STAIRS_DOWN:
                     await send_json(ws, {"type": "error", "reason": "need_stairs_down"})

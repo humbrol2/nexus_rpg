@@ -3,7 +3,7 @@
  * Draws a spritesheet of 32x32 tiles to a canvas with texture, shading, and detail.
  */
 
-const T = 32; // tile size
+const T = 64; // tile size (64px for 16-bit detail)
 
 // Seeded random for deterministic tile textures
 function mulberry32(a) {
@@ -825,67 +825,59 @@ export function getTileIndex(tileId) {
 
 export function generatePlayerTextures(scene) {
   const gfx = scene.add.graphics();
+  const S = T / 32; // scale factor from original 32px design
 
   // Self player — green sci-fi suit
   gfx.clear();
-  // Body
   gfx.fillStyle(0x006644, 1);
-  gfx.fillRect(10, 10, 12, 16); // torso
-  // Helmet
+  gfx.fillRect(10*S, 10*S, 12*S, 16*S);
   gfx.fillStyle(0x00ff88, 1);
-  gfx.fillRect(11, 4, 10, 10);
+  gfx.fillRect(11*S, 4*S, 10*S, 10*S);
   gfx.fillStyle(0x88ffcc, 1);
-  gfx.fillRect(13, 6, 6, 4); // visor
-  // Arms
+  gfx.fillRect(13*S, 6*S, 6*S, 4*S);
   gfx.fillStyle(0x005533, 1);
-  gfx.fillRect(7, 12, 3, 10);
-  gfx.fillRect(22, 12, 3, 10);
-  // Legs
+  gfx.fillRect(7*S, 12*S, 3*S, 10*S);
+  gfx.fillRect(22*S, 12*S, 3*S, 10*S);
   gfx.fillStyle(0x004422, 1);
-  gfx.fillRect(11, 26, 4, 5);
-  gfx.fillRect(17, 26, 4, 5);
-  gfx.generateTexture('player_self', 32, 32);
+  gfx.fillRect(11*S, 26*S, 4*S, 5*S);
+  gfx.fillRect(17*S, 26*S, 4*S, 5*S);
+  gfx.generateTexture('player_self', T, T);
 
   // Other player — blue suit
   gfx.clear();
   gfx.fillStyle(0x224466, 1);
-  gfx.fillRect(10, 10, 12, 16);
+  gfx.fillRect(10*S, 10*S, 12*S, 16*S);
   gfx.fillStyle(0x4488ff, 1);
-  gfx.fillRect(11, 4, 10, 10);
+  gfx.fillRect(11*S, 4*S, 10*S, 10*S);
   gfx.fillStyle(0x88bbff, 1);
-  gfx.fillRect(13, 6, 6, 4);
+  gfx.fillRect(13*S, 6*S, 6*S, 4*S);
   gfx.fillStyle(0x1a3355, 1);
-  gfx.fillRect(7, 12, 3, 10);
-  gfx.fillRect(22, 12, 3, 10);
+  gfx.fillRect(7*S, 12*S, 3*S, 10*S);
+  gfx.fillRect(22*S, 12*S, 3*S, 10*S);
   gfx.fillStyle(0x112244, 1);
-  gfx.fillRect(11, 26, 4, 5);
-  gfx.fillRect(17, 26, 4, 5);
-  gfx.generateTexture('player_other', 32, 32);
+  gfx.fillRect(11*S, 26*S, 4*S, 5*S);
+  gfx.fillRect(17*S, 26*S, 4*S, 5*S);
+  gfx.generateTexture('player_other', T, T);
 
-  // Sheep — fluffy white blob with legs and face
+  // Sheep
   gfx.clear();
-  // Body (wool)
   gfx.fillStyle(0xddddcc, 1);
-  gfx.fillEllipse(16, 16, 22, 16);
-  // Wool texture bumps
+  gfx.fillEllipse(16*S, 16*S, 22*S, 16*S);
   gfx.fillStyle(0xeeeedd, 1);
-  gfx.fillCircle(12, 13, 4);
-  gfx.fillCircle(18, 11, 4);
-  gfx.fillCircle(20, 15, 3);
-  gfx.fillCircle(14, 17, 3);
-  // Head
+  gfx.fillCircle(12*S, 13*S, 4*S);
+  gfx.fillCircle(18*S, 11*S, 4*S);
+  gfx.fillCircle(20*S, 15*S, 3*S);
+  gfx.fillCircle(14*S, 17*S, 3*S);
   gfx.fillStyle(0x888877, 1);
-  gfx.fillEllipse(6, 12, 8, 7);
-  // Eye
+  gfx.fillEllipse(6*S, 12*S, 8*S, 7*S);
   gfx.fillStyle(0x222222, 1);
-  gfx.fillCircle(5, 11, 1.5);
-  // Legs
+  gfx.fillCircle(5*S, 11*S, 1.5*S);
   gfx.fillStyle(0x665544, 1);
-  gfx.fillRect(10, 22, 2, 6);
-  gfx.fillRect(15, 22, 2, 6);
-  gfx.fillRect(19, 22, 2, 6);
-  gfx.fillRect(23, 22, 2, 6);
-  gfx.generateTexture('npc_sheep', 32, 32);
+  gfx.fillRect(10*S, 22*S, 2*S, 6*S);
+  gfx.fillRect(15*S, 22*S, 2*S, 6*S);
+  gfx.fillRect(19*S, 22*S, 2*S, 6*S);
+  gfx.fillRect(23*S, 22*S, 2*S, 6*S);
+  gfx.generateTexture('npc_sheep', T, T);
 
   gfx.destroy();
 }

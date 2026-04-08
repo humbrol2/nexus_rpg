@@ -58,7 +58,7 @@ class NPCManager:
                 result.append(a)
         return result
 
-    def spawn_in_chunk(self, cx: int, cy: int, world, chunk_size: int = 64, tile_px: int = 32, cz: int = 0) -> list[Animal]:
+    def spawn_in_chunk(self, cx: int, cy: int, world, chunk_size: int = 64, tile_px: int = 64, cz: int = 0) -> list[Animal]:
         """Spawn animals in a chunk if not already spawned. Returns new animals."""
         if cz != 0:
             return []  # Only spawn animals on surface for now
@@ -112,7 +112,7 @@ class NPCManager:
 
         return new_animals
 
-    def tick(self, dt: float, world, tile_px: int = 32) -> None:
+    def tick(self, dt: float, world, tile_px: int = 64) -> None:
         """Update all animal AI — wandering."""
         now = time.time()
 

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { TILE_SIZE } from '../TilesetGenerator.js';
 
 // ITEM_INFO is populated from server registry on init
 // Start with empty, filled by loadRegistry()
@@ -598,7 +599,7 @@ export class HUDScene extends Phaser.Scene {
     if (!this.minimapCanvas) return;
     const ctx = this.minimapCanvas.context;
     const size = this.minimapSize;
-    const tileSize = 32;
+    const tileSize = TILE_SIZE;
     const chunkPx = chunkSize * tileSize;
 
     ctx.fillStyle = '#080810';
@@ -648,7 +649,7 @@ export class HUDScene extends Phaser.Scene {
     const mapX = cam.width - margin - size;
     const mapY = margin;
     const scale = 8; // must match _renderMinimapCentered
-    const tileSize = 32;
+    const tileSize = TILE_SIZE;
     const chunkPx = chunkSize * tileSize;
     const half = size / 2;
     const playerCX = selfX / chunkPx;
@@ -884,7 +885,7 @@ export class HUDScene extends Phaser.Scene {
     const itemCount = Object.values(gs.inventory || {}).reduce((a, b) => a + b, 0);
     const itemTypes = Object.keys(gs.inventory || {}).length;
     addStat('Inventory', `${itemCount} items (${itemTypes} types)`);
-    addStat('Position', `${Math.floor(gs.myPlayer?.x / 32)}, ${Math.floor(gs.myPlayer?.y / 32)}`);
+    addStat('Position', `${Math.floor(gs.myPlayer?.x / TILE_SIZE)}, ${Math.floor(gs.myPlayer?.y / TILE_SIZE)}`);
   }
 
   closeCharSheet() {
@@ -2015,7 +2016,7 @@ export class HUDScene extends Phaser.Scene {
     const margin = 30;
     const mapW = cam.width - margin * 2;
     const mapH = cam.height - margin * 2;
-    const chunkWorldPx = 64 * 32;
+    const chunkWorldPx = 64 * TILE_SIZE;
 
     // State for pan/zoom
     this._wmPanX = 0;
@@ -2165,7 +2166,7 @@ export class HUDScene extends Phaser.Scene {
     const panY = this._wmPanY;
     const mapW = this._wmMapW;
     const mapH = this._wmMapH;
-    const chunkWorldPx = 64 * 32;
+    const chunkWorldPx = 64 * TILE_SIZE;
     const chunkTiles = 64;
 
     // Clear canvas
