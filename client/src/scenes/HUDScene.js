@@ -822,18 +822,22 @@ export class HUDScene extends Phaser.Scene {
     const container = this.add.container(startX, startY).setDepth(5000);
     this.charSheetElements.push(container);
 
-    // Background
+    // Background — frosted dark with blue accent
     const bg = this.add.graphics();
-    bg.fillStyle(0x0d1117, 0.95);
-    bg.fillRoundedRect(0, 0, panelW, panelH, 8);
-    bg.lineStyle(1, 0x44aaff, 0.35);
-    bg.strokeRoundedRect(0, 0, panelW, panelH, 8);
+    bg.fillStyle(0x080c14, 0.92);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x1a2a4a, 0.4);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x44aaff, 0.06);
+    bg.strokeRoundedRect(1, 1, panelW - 2, panelH - 2, 9);
     container.add(bg);
 
     // Title bar
     const titleBar = this.add.graphics();
     titleBar.fillStyle(0x0a1520, 1);
-    titleBar.fillRoundedRect(0, 0, panelW, 32, { tl: 8, tr: 8, bl: 0, br: 0 });
+    titleBar.fillRoundedRect(0, 0, panelW, 32, { tl: 10, tr: 10, bl: 0, br: 0 });
+    titleBar.fillStyle(0x44aaff, 0.08);
+    titleBar.fillRect(0, 31, panelW, 1);
     container.add(titleBar);
 
     container.add(this.add.text(12, 8, 'CHARACTER', {
@@ -1258,24 +1262,27 @@ export class HUDScene extends Phaser.Scene {
     this.inventoryContainer = container;
     this.inventoryElements.push(container);
 
-    // Panel background
+    // Panel background — frosted dark
     const bg = this.add.graphics();
-    bg.fillStyle(0x0d1117, 0.95);
-    bg.fillRoundedRect(0, 0, panelW, panelH, 8);
-    bg.lineStyle(1, 0x00ff88, 0.35);
-    bg.strokeRoundedRect(0, 0, panelW, panelH, 8);
+    bg.fillStyle(0x080c14, 0.92);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x1a3a2a, 0.4);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
+    // Inner glow line
+    bg.lineStyle(1, 0x00ff88, 0.06);
+    bg.strokeRoundedRect(1, 1, panelW - 2, panelH - 2, 9);
     container.add(bg);
 
     // Title bar
     const titleBar = this.add.graphics();
-    titleBar.fillStyle(0x141e2a, 1);
-    titleBar.fillRoundedRect(0, 0, panelW, titleBarH, { tl: 8, tr: 8, bl: 0, br: 0 });
-    titleBar.lineStyle(1, 0x00ff88, 0.2);
-    titleBar.lineBetween(0, titleBarH, panelW, titleBarH);
+    titleBar.fillStyle(0x0c1820, 1);
+    titleBar.fillRoundedRect(0, 0, panelW, titleBarH, { tl: 10, tr: 10, bl: 0, br: 0 });
+    titleBar.fillStyle(0x00ff88, 0.08);
+    titleBar.fillRect(0, titleBarH - 1, panelW, 1);
     container.add(titleBar);
 
     container.add(this.add.text(pad, 8, 'INVENTORY', {
-      fontSize: '14px', fontFamily: 'monospace', color: '#00ff88', fontStyle: 'bold',
+      fontSize: '14px', fontFamily: 'monospace', color: '#44ddaa', fontStyle: 'bold',
     }));
 
     const { btn: invCloseBtn, hit: invCloseHit } = createCloseButton(
@@ -1334,29 +1341,38 @@ export class HUDScene extends Phaser.Scene {
         const count = this.inventory[key] || 0;
         const swatchHex = parseInt(info.color.replace('#', ''), 16);
 
-        // Cell bg
-        cell.fillStyle(0x1a2233, 1);
-        cell.fillRoundedRect(cx, cy, cellSize, cellSize, 5);
-        cell.lineStyle(1, swatchHex, 0.5);
-        cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 5);
+        // Cell bg — darker with subtle item color tint
+        cell.fillStyle(0x0e1420, 1);
+        cell.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
+        cell.lineStyle(1, swatchHex, 0.35);
+        cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 6);
+        // Color accent bar at top
+        cell.fillStyle(swatchHex, 0.3);
+        cell.fillRect(cx + 3, cy + 1, cellSize - 6, 2);
 
-        // Icon
-        const iconSize = 26;
+        // Icon swatch — larger with shine
+        const iconSize = 28;
         const iconX = cx + (cellSize - iconSize) / 2;
         const iconY = cy + 5;
-        cell.fillStyle(swatchHex, 1);
-        cell.fillRoundedRect(iconX, iconY, iconSize, iconSize, 4);
-        cell.fillStyle(0xffffff, 0.18);
-        cell.fillRect(iconX + 2, iconY + 2, iconSize - 4, 6);
+        cell.fillStyle(swatchHex, 0.9);
+        cell.fillRoundedRect(iconX, iconY, iconSize, iconSize, 5);
+        cell.fillStyle(0xffffff, 0.2);
+        cell.fillRoundedRect(iconX + 2, iconY + 2, iconSize - 4, 8, 3);
+        // Dark bottom edge
+        cell.fillStyle(0x000000, 0.2);
+        cell.fillRect(iconX + 2, iconY + iconSize - 4, iconSize - 4, 3);
 
         container.add(cell);
 
         // Label
-        container.add(this.add.text(cx + cellSize / 2, cy + 35, info.label, {
+        container.add(this.add.text(cx + cellSize / 2, cy + 36, info.label, {
           fontSize: '9px', fontFamily: 'monospace', color: info.color,
         }).setOrigin(0.5, 0));
 
-        // Count
+        // Count — with subtle shadow
+        container.add(this.add.text(cx + cellSize / 2 + 1, cy + 50, String(count), {
+          fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold', color: '#000000',
+        }).setOrigin(0.5, 0).setAlpha(0.3));
         container.add(this.add.text(cx + cellSize / 2, cy + 49, String(count), {
           fontSize: '14px', fontFamily: 'monospace', fontStyle: 'bold', color: '#ffffff',
         }).setOrigin(0.5, 0));
@@ -1626,24 +1642,26 @@ export class HUDScene extends Phaser.Scene {
     this.craftingContainer = container;
     this.craftingElements.push(container);
 
-    // Background
+    // Background — frosted dark with amber accent
     const bg = this.add.graphics();
-    bg.fillStyle(0x0d1117, 0.95);
-    bg.fillRoundedRect(0, 0, panelW, panelH, 8);
-    bg.lineStyle(1, 0xffcc44, 0.35);
-    bg.strokeRoundedRect(0, 0, panelW, panelH, 8);
+    bg.fillStyle(0x080c14, 0.92);
+    bg.fillRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0x2a2a1a, 0.4);
+    bg.strokeRoundedRect(0, 0, panelW, panelH, 10);
+    bg.lineStyle(1, 0xffcc44, 0.06);
+    bg.strokeRoundedRect(1, 1, panelW - 2, panelH - 2, 9);
     container.add(bg);
 
     // Title bar
     const titleBar = this.add.graphics();
-    titleBar.fillStyle(0x1a1a10, 1);
-    titleBar.fillRoundedRect(0, 0, panelW, titleBarH, { tl: 8, tr: 8, bl: 0, br: 0 });
-    titleBar.lineStyle(1, 0xffcc44, 0.2);
-    titleBar.lineBetween(0, titleBarH, panelW, titleBarH);
+    titleBar.fillStyle(0x10140c, 1);
+    titleBar.fillRoundedRect(0, 0, panelW, titleBarH, { tl: 10, tr: 10, bl: 0, br: 0 });
+    titleBar.fillStyle(0xffcc44, 0.08);
+    titleBar.fillRect(0, titleBarH - 1, panelW, 1);
     container.add(titleBar);
 
     container.add(this.add.text(pad, 11, 'CRAFTING', {
-      fontSize: '20px', fontFamily: 'monospace', color: '#ffcc44', fontStyle: 'bold',
+      fontSize: '18px', fontFamily: 'monospace', color: '#eebb44', fontStyle: 'bold',
     }));
     const { btn: craftCloseBtn, hit: craftCloseHit } = createCloseButton(
       this, startX + panelW - pad, startY + 10, '#554433', 3105, () => this.closeCrafting()
@@ -1737,17 +1755,22 @@ export class HUDScene extends Phaser.Scene {
 
       // Cell background
       const cell = this.add.graphics();
-      cell.fillStyle(canCraft ? 0x1a2a1a : 0x111115, 1);
-      cell.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
-      cell.lineStyle(1, canCraft ? 0x33aa44 : researched ? 0x222233 : 0x442222, canCraft ? 0.5 : 0.3);
-      cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 6);
+      cell.fillStyle(canCraft ? 0x0e1a14 : 0x0a0c12, 1);
+      cell.fillRoundedRect(cx, cy, cellSize, cellSize, 8);
+      cell.lineStyle(1, canCraft ? 0x2a8844 : researched ? 0x1a1e28 : 0x331818, canCraft ? 0.6 : 0.3);
+      cell.strokeRoundedRect(cx, cy, cellSize, cellSize, 8);
+      // Top accent
+      if (canCraft) {
+        cell.fillStyle(0x33cc55, 0.1);
+        cell.fillRect(cx + 4, cy + 1, cellSize - 8, 2);
+      }
       container.add(cell);
 
-      // Locked overlay
+      // Locked overlay with icon
       if (!researched) {
         const lock = this.add.graphics();
-        lock.fillStyle(0x000000, 0.4);
-        lock.fillRoundedRect(cx, cy, cellSize, cellSize, 6);
+        lock.fillStyle(0x000000, 0.5);
+        lock.fillRoundedRect(cx, cy, cellSize, cellSize, 8);
         container.add(lock);
       }
 
@@ -2306,18 +2329,20 @@ export class HUDScene extends Phaser.Scene {
     overlay.fillRect(0, 0, cam.width, cam.height);
     this.researchElements.push(overlay);
 
-    // Panel
+    // Panel — frosted dark with purple accent
     const border = this.add.graphics().setDepth(4501);
-    border.fillStyle(0x0a0e14, 0.96);
-    border.fillRoundedRect(margin, margin, mapW, mapH, 10);
-    border.lineStyle(1, 0x8866ff, 0.3);
-    border.strokeRoundedRect(margin, margin, mapW, mapH, 10);
+    border.fillStyle(0x080a14, 0.94);
+    border.fillRoundedRect(margin, margin, mapW, mapH, 12);
+    border.lineStyle(1, 0x2a1a4a, 0.4);
+    border.strokeRoundedRect(margin, margin, mapW, mapH, 12);
+    border.lineStyle(1, 0x8866ff, 0.06);
+    border.strokeRoundedRect(margin + 1, margin + 1, mapW - 2, mapH - 2, 11);
     this.researchElements.push(border);
 
     // Title
     this.researchElements.push(
       this.add.text(cam.width / 2, margin + 12, 'RESEARCH TREE', {
-        fontSize: '18px', fontFamily: 'monospace', color: '#8866ff', fontStyle: 'bold',
+        fontSize: '18px', fontFamily: 'monospace', color: '#9977ff', fontStyle: 'bold',
       }).setOrigin(0.5, 0).setDepth(4510)
     );
     const { btn: resCloseBtn, hit: resCloseHit } = createCloseButton(
