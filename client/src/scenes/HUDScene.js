@@ -146,64 +146,67 @@ export class HUDScene extends Phaser.Scene {
 
   create() {
 
-    // Coord text (top-left)
-    this.coordText = this.add.text(10, 42, '', {
-      fontSize: '14px', fontFamily: 'monospace',
-      color: '#00ff88', backgroundColor: '#000000aa',
-      padding: { x: 6, y: 4 },
-    }).setDepth(1000);
-
-    this.statusText = this.add.text(10, 66, 'Connecting...', {
-      fontSize: '13px', fontFamily: 'monospace',
-      color: '#ffaa00', backgroundColor: '#000000aa',
-      padding: { x: 6, y: 4 },
-    }).setDepth(1000);
-
-    this.tileInfoText = this.add.text(10, 90, '', {
-      fontSize: '12px', fontFamily: 'monospace',
-      color: '#aaaacc', backgroundColor: '#000000aa',
-      padding: { x: 6, y: 3 },
-    }).setDepth(1000);
-
-    // Zone display (top-left, below coords)
-    this.zoneText = this.add.text(10, 112, '', {
-      fontSize: '13px', fontFamily: 'monospace',
-      color: '#44aa66', backgroundColor: '#000000aa',
-      padding: { x: 6, y: 4 },
-    }).setDepth(1000);
-
-    // Toast
-    this.toastText = this.add.text(
-      this.cameras.main.width / 2, 80, '', {
-        fontSize: '14px', fontFamily: 'monospace',
-        color: '#ffffff', backgroundColor: '#33aa5588',
-        padding: { x: 10, y: 6 },
-      }
-    ).setOrigin(0.5).setDepth(1001).setVisible(false);
-
-    // Hint text (bottom-left, fades after a few seconds)
     const cam = this.cameras.main;
 
-    // Z-level indicator (top-center, only visible underground)
-    this._zLevelText = this.add.text(cam.width / 2, 42, '', {
-      fontSize: '16px', fontFamily: 'monospace',
-      color: '#ff8844', fontStyle: 'bold',
-      backgroundColor: '#000000aa',
-      padding: { x: 10, y: 4 },
-    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false);
+    // ── Top-left HUD cluster (dark panel backdrop) ──
+    this._hudPanelBg = this.add.graphics().setDepth(999);
+    this._hudPanelBg.fillStyle(0x080c12, 0.85);
+    this._hudPanelBg.fillRoundedRect(6, 4, 200, 130, 8);
+    this._hudPanelBg.lineStyle(1, 0x1a2a3a, 0.5);
+    this._hudPanelBg.strokeRoundedRect(6, 4, 200, 130, 8);
+
     // Health bar (top-left, always visible)
     this._hpBarBg = this.add.graphics().setDepth(1002);
     this._hpBarFg = this.add.graphics().setDepth(1003);
-    this._hpText = this.add.text(12, 8, 'HP: 100/100', {
-      fontSize: '11px', fontFamily: 'monospace', color: '#ff4444', fontStyle: 'bold',
+    this._hpText = this.add.text(14, 10, 'HP: 100/100', {
+      fontSize: '12px', fontFamily: 'monospace', color: '#ee5555', fontStyle: 'bold',
     }).setDepth(1004);
     this._drawHPBar();
 
-    this.hintText = this.add.text(10, cam.height - 24,
-      'Press H for help  |  ` for chat', {
-        fontSize: '11px', fontFamily: 'monospace',
-        color: '#556655', backgroundColor: '#000000aa',
-        padding: { x: 6, y: 3 },
+    // Coord text
+    this.coordText = this.add.text(14, 48, '', {
+      fontSize: '12px', fontFamily: 'monospace',
+      color: '#44ddaa',
+    }).setDepth(1000);
+
+    this.statusText = this.add.text(14, 66, 'Connecting...', {
+      fontSize: '11px', fontFamily: 'monospace',
+      color: '#ddaa44',
+    }).setDepth(1000);
+
+    this.tileInfoText = this.add.text(14, 84, '', {
+      fontSize: '11px', fontFamily: 'monospace',
+      color: '#8899bb',
+    }).setDepth(1000);
+
+    // Zone display
+    this.zoneText = this.add.text(14, 102, '', {
+      fontSize: '11px', fontFamily: 'monospace',
+      color: '#44aa66',
+    }).setDepth(1000);
+
+    // Toast (center-top, pill-shaped)
+    this.toastText = this.add.text(
+      cam.width / 2, 60, '', {
+        fontSize: '13px', fontFamily: 'monospace',
+        color: '#ffffff', backgroundColor: '#1a8a4488',
+        padding: { x: 14, y: 8 },
+      }
+    ).setOrigin(0.5).setDepth(1001).setVisible(false);
+
+    // Z-level indicator (top-center, only visible underground)
+    this._zLevelText = this.add.text(cam.width / 2, 42, '', {
+      fontSize: '14px', fontFamily: 'monospace',
+      color: '#ff8844', fontStyle: 'bold',
+      backgroundColor: '#0a0a0fcc',
+      padding: { x: 12, y: 5 },
+    }).setOrigin(0.5, 0).setDepth(1001).setVisible(false);
+
+    this.hintText = this.add.text(10, cam.height - 26,
+      'H = help  |  ` = chat  |  K = stats', {
+        fontSize: '10px', fontFamily: 'monospace',
+        color: '#445544', backgroundColor: '#0a0a0faa',
+        padding: { x: 8, y: 4 },
       }
     ).setDepth(1000);
     // Fade out after 15 seconds
@@ -723,22 +726,29 @@ export class HUDScene extends Phaser.Scene {
   }
 
   _drawHPBar() {
-    const barW = 140, barH = 14, x = 10, y = 24;
+    const barW = 170, barH = 16, x = 12, y = 28;
     const pct = Math.max(0, this._hp / this._maxHp);
-    // Background
     if (this._hpBarBg) {
       this._hpBarBg.clear();
-      this._hpBarBg.fillStyle(0x000000, 0.6);
+      // Outer border
+      this._hpBarBg.lineStyle(1, 0x2a3a4a, 0.6);
+      this._hpBarBg.strokeRoundedRect(x - 1, y - 1, barW + 2, barH + 2, 4);
+      // Inner dark
+      this._hpBarBg.fillStyle(0x0a0e14, 0.8);
       this._hpBarBg.fillRoundedRect(x, y, barW, barH, 3);
     }
-    // Foreground
     if (this._hpBarFg) {
       this._hpBarFg.clear();
-      const color = pct > 0.5 ? 0x33cc44 : pct > 0.25 ? 0xccaa22 : 0xcc3333;
-      this._hpBarFg.fillStyle(color, 0.9);
-      this._hpBarFg.fillRoundedRect(x + 1, y + 1, (barW - 2) * pct, barH - 2, 2);
+      const fillW = Math.max(0, (barW - 2) * pct);
+      if (fillW > 0) {
+        const color = pct > 0.5 ? 0x22bb44 : pct > 0.25 ? 0xccaa22 : 0xcc2222;
+        this._hpBarFg.fillStyle(color, 0.9);
+        this._hpBarFg.fillRoundedRect(x + 1, y + 1, fillW, barH - 2, 2);
+        // Highlight stripe
+        this._hpBarFg.fillStyle(0xffffff, 0.12);
+        this._hpBarFg.fillRect(x + 2, y + 2, fillW - 2, 3);
+      }
     }
-    // Text
     if (this._hpText) {
       this._hpText.setText(`HP: ${this._hp}/${this._maxHp}`);
     }
